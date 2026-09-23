@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const dbPath = path.join(os.tmpdir(), `hiworld-club-test-${process.pid}-${Date.now()}.json`);
 const token = 'test-clubdesk-secret';
@@ -140,6 +141,124 @@ test('club desk auth, live totals, status actions, and trek capacity', async (t)
       assert.equal(exported.response.status, 200);
       assert.match(String(exported.data), /Test Member/);
       assert.match(exported.response.headers.get('content-type'), /text\/csv/);
+    });
+
+    await t.test('shows safe public activity and clears every collection persistently', async () => {
+      const livePledge = await request(base, '/api/admin/pledges', {
+        method: 'POST', admin: true,
+        body: { name: 'Public Sync Donor', genre: 'Classics', qty: 4, status: 'pledged' },
+      });
+      assert.equal(livePledge.response.status, 201);
+      let publicPledges = await request(base, '/api/pledges?limit=50');
+      assert.ok(publicPledges.data.pledges.some((pledge) => pledge.name === 'Public Sync Donor'));
+      const deletePledge = await request(base, `/api/admin/pledges/${livePledge.data.item.id}`, {
+        method: 'DELETE', admin: true,
+      });
+      assert.equal(deletePledge.response.status, 200);
+      publicPledges = await request(base, '/api/pledges?limit=50');
+      assert.equal(publicPledges.data.pledges.some((pledge) => pledge.name === 'Public Sync Donor'), false);
+
+      const livePass = await request(base, '/api/admin/passes', {
+        method: 'POST', admin: true,
+        body: { name: 'Public Sync Visitor', track: 'Treks', status: 'active' },
+      });
+      assert.equal(livePass.response.status, 201);
+      let publicPasses = await request(base, '/api/passes/latest?limit=6');
+      assert.ok(publicPasses.data.passes.some((pass) => pass.name === 'Public Sync Visitor'));
+      const deletePass = await request(base, `/api/admin/passes/${livePass.data.item.id}`, {
+        method: 'DELETE', admin: true,
+      });
+      assert.equal(deletePass.response.status, 200);
+      publicPasses = await request(base, '/api/passes/latest?limit=6');
+      assert.equal(publicPasses.data.passes.some((pass) => pass.name === 'Public Sync Visitor'), false);
+
+      const privateRecord = await request(base, '/api/admin/applications', {
+        method: 'POST', admin: true,
+        body: { name: 'Private Feed Applicant', wc: 'private-feed-wechat', org: 'Confidential School', interests: ['treks'], msg: 'Do not publish this note.' },
+      });
+      assert.equal(privateRecord.response.status, 201);
+      const removed = await request(base, `/api/admin/applications/${privateRecord.data.item.id}`, {
+        method: 'DELETE', admin: true,
+      });
+      assert.equal(removed.response.status, 200);
+
+      const feed = await request(base, '/api/public/activity?limit=8');
+      assert.equal(feed.response.status, 200);
+      assert.ok(feed.data.activity.some((event) => event.message === 'A new club application was received.'));
+      assert.ok(feed.data.activity.some((event) => event.message === 'A club application was removed.'));
+      const publicJson = JSON.stringify(feed.data);
+      for (const secret of ['Private Feed Applicant', 'private-feed-wechat', 'Confidential School', 'Do not publish this note.', 'ref_id', 'summary']) {
+        assert.equal(publicJson.includes(secret), false, `public activity must not contain ${secret}`);
+      }
+      assert.ok(feed.data.activity.every((event) => !('id' in event) && !('action' in event)));
+
+      const unauthorized = await request(base, '/api/admin/clear-all', {
+        method: 'POST', body: { confirm: 'CLEAR ALL DATA' },
+      });
+      assert.equal(unauthorized.response.status, 401);
+      const badPhrase = await request(base, '/api/admin/clear-all', {
+        method: 'POST', admin: true, body: { confirm: 'CLEAR' },
+      });
+      assert.equal(badPhrase.response.status, 400);
+
+      const cleared = await request(base, '/api/admin/clear-all', {
+        method: 'POST', admin: true, body: { confirm: 'CLEAR ALL DATA' },
+      });
+      assert.equal(cleared.response.status, 200);
+      assert.ok(cleared.data.cleared.applications >= 1);
+      assert.ok(cleared.data.cleared.pledges >= 2);
+      assert.ok(cleared.data.cleared.reservations >= 20);
+      assert.ok(cleared.data.cleared.activity >= 20);
+
+      for (const collection of ['applications', 'pledges', 'passes', 'reservations']) {
+        const list = await request(base, `/api/admin/${collection}`, { admin: true });
+        assert.equal(list.data.total, 0, `${collection} should be empty after clearing`);
+      }
+      assert.equal((await request(base, '/api/admin/activity', { admin: true })).data.total, 0);
+      assert.deepEqual((await request(base, '/api/public/activity')).data.activity, []);
+      assert.deepEqual((await request(base, '/api/pledges?limit=50')).data.pledges, []);
+      assert.deepEqual((await request(base, '/api/passes/latest')).data.passes, []);
+      assert.deepEqual((await request(base, '/api/reservations/counts')).data.counts, { alibaba: 0, refinery: 0 });
+
+      // Start a fresh Node process with normal demo seeding enabled. An explicit
+      // wipe must keep the file empty rather than silently restoring sample rows.
+      const script = `const { store } = require(${JSON.stringify(require.resolve('./db'))}); process.stdout.write(JSON.stringify(store.snapshot()));`;
+      const restarted = spawnSync(process.execPath, ['-e', script], {
+        encoding: 'utf8',
+        env: { ...process.env, DB_PATH: dbPath, SEED_DEMO: '1' },
+      });
+      assert.equal(restarted.status, 0, restarted.stderr);
+      const persisted = JSON.parse(restarted.stdout);
+      assert.deepEqual(persisted.applications, []);
+      assert.deepEqual(persisted.pledges, []);
+      assert.deepEqual(persisted.passes, []);
+      assert.deepEqual(persisted.reservations, []);
+      assert.deepEqual(persisted.activity, []);
+      assert.equal(persisted.meta.suppressDemoSeed, true);
+
+      // Deleting every record one-by-one leaves audit history; that is not a
+      // truly empty store and should not trigger demo seeding either.
+      const auditOnlyPath = `${dbPath}.audit-only.json`;
+      try {
+        fs.writeFileSync(auditOnlyPath, JSON.stringify({
+          applications: [], pledges: [], passes: [], reservations: [],
+          activity: [{ id: 1, type: 'application', action: 'deleted', summary: 'private', ref_id: 9, created_at: '2026-01-01 00:00:00' }],
+          seq: 2, meta: {},
+        }));
+        const auditScript = `const { store } = require(${JSON.stringify(require.resolve('./db'))}); process.stdout.write(JSON.stringify(store.snapshot()));`;
+        const auditRestart = spawnSync(process.execPath, ['-e', auditScript], {
+          encoding: 'utf8',
+          env: { ...process.env, DB_PATH: auditOnlyPath, SEED_DEMO: '1' },
+        });
+        assert.equal(auditRestart.status, 0, auditRestart.stderr);
+        const auditOnly = JSON.parse(auditRestart.stdout);
+        assert.deepEqual(auditOnly.applications, []);
+        assert.equal(auditOnly.activity.length, 1);
+        assert.notEqual(auditOnly.meta.demo, true);
+      } finally {
+        fs.rmSync(auditOnlyPath, { force: true });
+        fs.rmSync(`${auditOnlyPath}.tmp`, { force: true });
+      }
     });
   } finally {
     await new Promise((resolve) => server.close(resolve));

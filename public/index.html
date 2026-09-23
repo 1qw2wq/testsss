@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="preload" as="image" href="/images/cohort.jpg" />
 <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="/css/styles.css" />
+<link rel="stylesheet" href="/css/styles.css?v=3" />
 </head>
 <body>
 
@@ -163,6 +163,13 @@
     <span class="stat-chip card"><b id="statMembers">…</b><span>members &amp; applicants</span></span>
     <span class="stat-chip card"><b aria-hidden="true">🎟</b><span id="statSeats">trek seats</span></span>
   </div>
+
+  <section class="club-pulse reveal" aria-label="Recent public club updates">
+    <p class="club-pulse-heading"><span class="pulse" aria-hidden="true"></span> Recent club updates</p>
+    <ul id="clubPulseList" class="club-pulse-list" aria-live="polite" aria-relevant="additions text">
+      <li class="club-pulse-item empty">Checking for recent updates…</li>
+    </ul>
+  </section>
 
   <a href="#moments" class="scroll-cue" aria-label="Scroll to moments"></a>
 </section>
@@ -547,6 +554,6 @@ Cohort</h2>
   </figure>
 </div>
 
-<script src="/js/app.js" defer></script>
+<script src="/js/app.js?v=3" defer></script>
 </body>
 </html>

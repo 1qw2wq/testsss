@@ -90,6 +90,7 @@
       <a class="side-link" href="/">View the club site</a>
       <button type="button" class="side-link btn-reset" data-act="sign-out">Sign out</button>
       <p class="demo-note" id="demoNote" hidden>Sample data <button type="button" data-act="reset-demo">Reset</button></p>
+      <button type="button" class="side-danger" data-act="clear-all">Clear all data</button>
       <p class="keys">/ search · Esc closes</p>
     </div>
   </aside>
@@ -136,6 +137,10 @@
   <div class="dialog dialog-sm" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle">
     <h2 id="confirmTitle"></h2>
     <p id="confirmBody"></p>
+    <div id="confirmPhraseWrap" class="field confirm-phrase" hidden>
+      <label for="confirmPhrase">Type <strong id="confirmPhraseText"></strong> to continue</label>
+      <input id="confirmPhrase" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+    </div>
     <div class="dialog-actions">
       <button type="button" class="btn" data-act="confirm-no">Cancel</button>
       <button type="button" class="btn btn-ink" id="confirmYes" data-act="confirm-yes">Confirm</button>

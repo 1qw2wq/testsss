@@ -106,10 +106,11 @@ if (JSON.stringify(data) !== loadedJson) {
 }
 
 function isEmpty() {
-  return COLLECTIONS.every((c) => data[c].length === 0);
+  // Audit-only stores can occur after deleting the last record; don't reseed over them.
+  return COLLECTIONS.every((c) => data[c].length === 0) && data.activity.length === 0;
 }
 
-if (process.env.SEED_DEMO !== '0' && isEmpty()) {
+if (process.env.SEED_DEMO !== '0' && isEmpty() && !data.meta.suppressDemoSeed) {
   data = migrate(require('./seed').buildSeed());
   try { save(); } catch (err) { console.error('Seed save failed:', err.message); }
 }
@@ -185,6 +186,22 @@ function replaceAll(next) {
   data = migrate(JSON.parse(JSON.stringify(next)));
   save();
   return snapshot();
+}
+
+function clearAll() {
+  const counts = Object.fromEntries([...COLLECTIONS, 'activity'].map((collection) => [collection, data[collection].length]));
+  data = {
+    pledges: [],
+    applications: [],
+    passes: [],
+    reservations: [],
+    activity: [],
+    seq: 1,
+    // Keep an explicitly cleared store empty on future server starts.
+    meta: { suppressDemoSeed: true, cleared_at: now() },
+  };
+  save();
+  return counts;
 }
 
 function byRecent(rows, limit) {
@@ -291,6 +308,7 @@ const store = {
   updateRow,
   removeRow,
   replaceAll,
+  clearAll,
   trekLabel,
   now,
 };

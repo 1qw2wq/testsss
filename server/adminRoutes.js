@@ -331,6 +331,14 @@ function registerAdmin(app, ctx) {
     res.json({ ok: true, updated, skipped });
   });
 
+  app.post('/api/admin/clear-all', requireAdmin, (req, res) => {
+    if (clean(req.body.confirm, 40) !== 'CLEAR ALL DATA') {
+      return res.status(400).json({ ok: false, error: 'Confirmation did not match.' });
+    }
+    const cleared = store.clearAll();
+    res.json({ ok: true, cleared });
+  });
+
   app.post('/api/admin/seed', requireAdmin, (req, res) => {
     if (!store.isEmpty()) return res.status(409).json({ ok: false, error: 'The desk already has records.' });
     store.replaceAll(require('./seed').buildSeed());

@@ -8,6 +8,7 @@
  *   GET  /api/health
  *   GET  /api/treks
  *   GET  /api/stats
+ *   GET  /api/public/activity  privacy-safe club update feed
  *   GET  /api/pledges?limit=8
  *   POST /api/pledges            { name?, genre, qty }
  *   POST /api/applications       { name*, wc*, org?, interests?[], msg? }
@@ -81,8 +82,10 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
   maxAge: '1h',
   etag: true,
   setHeaders(res, filePath) {
-    // HTML and the desk assets must never cache — always serve the latest.
-    if (filePath.endsWith('.html') || filePath.endsWith(`${path.sep}admin.js`) || filePath.endsWith(`${path.sep}admin.css`)) {
+    // HTML and interactive app assets must never cache — always serve the latest.
+    const freshAsset = ['admin.js', 'admin.css', 'app.js', 'styles.css']
+      .some((name) => filePath.endsWith(`${path.sep}${name}`));
+    if (filePath.endsWith('.html') || freshAsset) {
       res.setHeader('Cache-Control', 'no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
     }
@@ -138,6 +141,42 @@ app.get('/api/stats', (req, res) => {
     passes: stmts.countPasses.get().n,
     reservations: reservationCounts(),
   });
+});
+
+// Anonymous, privacy-safe feed for the public homepage. Private applications,
+// names, WeChat IDs, notes, and internal activity summaries never leave here.
+function publicActivityMessage(event) {
+  if (event.action === 'deleted') {
+    return event.type === 'application' ? 'A club application was removed.'
+      : event.type === 'pledge' ? 'A book-drive pledge was removed.'
+        : event.type === 'pass' ? 'A visitor pass was removed.'
+          : 'A trek roster entry was removed.';
+  }
+  if (event.action === 'created') {
+    return event.type === 'application' ? 'A new club application was received.'
+      : event.type === 'pledge' ? 'New books were pledged to the drive.'
+        : event.type === 'pass' ? 'A visitor pass was issued.'
+          : 'A trek reservation was added.';
+  }
+  return event.type === 'application' ? 'Club application review was updated.'
+    : event.type === 'pledge' ? 'The book drive was updated.'
+      : event.type === 'pass' ? 'The visitor roster was updated.'
+        : 'The trek roster was updated.';
+}
+
+app.get('/api/public/activity', (req, res) => {
+  const limit = Math.min(8, Math.max(1, Number(req.query.limit) || 5));
+  const visible = new Set(['application', 'pledge', 'pass', 'reservation']);
+  const activity = store.snapshot().activity
+    .filter((event) => visible.has(event.type))
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || b.id - a.id)
+    .slice(0, limit)
+    .map((event) => ({
+      type: event.type,
+      message: publicActivityMessage(event),
+      created_at: event.created_at,
+    }));
+  res.json({ ok: true, activity });
 });
 
 // ---- pledges ----

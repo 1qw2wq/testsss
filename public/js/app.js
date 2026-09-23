@@ -394,6 +394,7 @@
         syncReserveTrek();
         loadTrekSeats();
         loadStats();
+        loadPublicActivity();
       } catch (err) {
         toast(err.message);
       } finally {
@@ -434,8 +435,14 @@
   function paintPledges(rows) {
     const list = $('#pledgeList');
     list.innerHTML = '';
-    const items = rows.length ? rows : seed;
-    items.slice(0, 8).forEach((p) => {
+    if (!rows.length) {
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = 'No pledges yet. Be the first to add one.';
+      list.appendChild(li);
+      return;
+    }
+    rows.slice(0, 8).forEach((p) => {
       const li = document.createElement('li');
       const a = document.createElement('span');
       a.textContent = `${p.name} · ${p.genre}`;
@@ -450,7 +457,7 @@
     try {
       const d = await api.get('/api/pledges?limit=8');
       paintMeter(d.total, animate);
-      paintPledges(d.pledges.length ? d.pledges : seed);
+      paintPledges(d.pledges);
     } catch {
       markOffline();
       const local = store.get('hw_pledges', []);
@@ -476,6 +483,7 @@
       const d = await api.post('/api/pledges', { name, genre, qty });
       paintMeter(d.total, true);
       loadPledges();
+      loadPublicActivity();
       toast(`Thank you, ${name}! ${qty} book${qty > 1 ? 's' : ''} pledged.`);
     } catch (err) {
       // Offline fallback: keep it locally so nothing is lost.
@@ -553,6 +561,7 @@
         applyPass(d.pass);
         loadRecentPasses();
         loadStats();
+        loadPublicActivity();
         toast(`Pass issued to ${name}. It's on your lanyard now.`);
       } catch (err) {
         if (!api.online || /fetch|network|timeout/i.test(err.message)) {
@@ -615,6 +624,7 @@
         $('#joinFormWrap').hidden = true;
         $('#joinDone').hidden = false;
         loadStats();
+        loadPublicActivity();
       } catch (err) {
         if (!api.online || /fetch|network|timeout/i.test(err.message)) {
           const apps = store.get('hw_apps', []);
@@ -732,11 +742,69 @@
     poster.addEventListener('pointerleave', () => poster.classList.remove('parallax'));
   }
 
+  /* ---------------- privacy-safe live club activity ---------------- */
+  let publicActivitySignature = null;
+  function formatPublicTime(value) {
+    const raw = String(value || '');
+    const date = new Date(raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`);
+    if (Number.isNaN(date.getTime())) return '';
+    return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
+  }
+
+  async function loadPublicActivity() {
+    const list = $('#clubPulseList');
+    if (!list) return;
+    try {
+      const result = await api.get('/api/public/activity?limit=5');
+      const items = Array.isArray(result.activity) ? result.activity : [];
+      const signature = JSON.stringify(items.map((item) => [item.message, item.created_at, item.type]));
+      if (signature === publicActivitySignature) return;
+      publicActivitySignature = signature;
+      list.replaceChildren();
+      if (!items.length) {
+        const empty = document.createElement('li');
+        empty.className = 'club-pulse-item empty';
+        empty.textContent = 'No recent updates yet — check back soon.';
+        list.appendChild(empty);
+        return;
+      }
+      items.forEach((item) => {
+        const li = document.createElement('li');
+        li.className = 'club-pulse-item';
+        const dot = document.createElement('i');
+        dot.className = `club-pulse-dot type-${['application', 'pledge', 'pass', 'reservation'].includes(item.type) ? item.type : 'reservation'}`;
+        dot.setAttribute('aria-hidden', 'true');
+        const message = document.createElement('span');
+        message.textContent = item.message;
+        li.append(dot, message);
+        const timestamp = formatPublicTime(item.created_at);
+        if (timestamp) {
+          const time = document.createElement('time');
+          time.dateTime = item.created_at.includes('T') ? item.created_at : `${item.created_at.replace(' ', 'T')}Z`;
+          time.textContent = timestamp;
+          li.appendChild(time);
+        }
+        list.appendChild(li);
+      });
+    } catch {
+      markOffline();
+    }
+  }
+
+  function refreshPublicData() {
+    if (document.hidden) return;
+    loadStats();
+    loadPledges();
+    loadTrekSeats();
+    loadRecentPasses();
+    loadPublicActivity();
+  }
+
   /* ---------------- boot ---------------- */
   fitAll();
   setTimeout(fitAll, 300);
-  loadStats();
-  loadPledges();
-  loadTrekSeats();
-  addEventListener('online', () => loadStats());
+  refreshPublicData();
+  setInterval(refreshPublicData, 45_000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshPublicData(); });
+  addEventListener('online', refreshPublicData);
 })();

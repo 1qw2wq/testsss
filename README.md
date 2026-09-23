@@ -8,10 +8,10 @@ Refined poster site + real backend. One part industry immersion, one part hard s
   - HI (vials + NFC/member lanyards) and WORLD (books, pens, remotes, tubes) compositions
   - New **Moments** photo gallery with lightbox (6 custom photos in `public/images/`)
   - Photos inside every modal (treks, workshop, book drive, cohort)
-  - Live stats band, live trek seat counts, recent passes & pledges
+  - Live stats band, live trek seat counts, recent passes & pledges, and privacy-safe public club updates
   - Works **offline**: forms fall back to localStorage when the API is unreachable
 - **Backend** (`server/`) — Node.js + Express + zero-dependency JSON file store (file at `data/club.json`, no native builds)
-  - `GET /api/health`, `GET /api/treks`, `GET /api/stats`
+  - `GET /api/health`, `GET /api/treks`, `GET /api/stats`, `GET /api/public/activity` (generic updates only; no private application details)
   - `GET/POST /api/pledges` — book-drive pledges
   - `POST /api/applications` (+ admin `GET`) — join applications
   - `POST /api/passes`, `GET /api/passes/latest` — cohort visitor passes
@@ -39,11 +39,11 @@ curl -H 'x-admin-token: hiworld-admin' http://localhost:3000/api/admin/overview
 curl -H 'x-admin-token: hiworld-admin' http://localhost:3000/api/admin/applications
 ```
 
-An empty store is populated with realistic sample records so the desk has something to work with on first launch. Set `SEED_DEMO=0` to start empty (also used by the test suite). The sample-data banner has a guarded reset action. The first new public submission or manual record disables sample reset so real records cannot be wiped by that control. `DB_PATH` still controls the JSON file location.
+An empty store is populated with realistic sample records so the desk has something to work with on first launch. Set `SEED_DEMO=0` to start empty (also used by the test suite). The sample-data banner has a guarded reset action. The first new public submission or manual record disables sample reset so real records cannot be wiped by that control. The sidebar’s **Clear all data** action requires typing `CLEAR ALL DATA`; it deletes all four record collections and the activity log. The fixed 347-book historical baseline is not a saved pledge, so it remains in public totals. A persisted marker prevents an empty store from being automatically reseeded with demo records on the next start, as long as the configured JSON file remains available. `DB_PATH` controls the JSON file location.
 
 Desk routes include `GET /api/admin/overview`, `/badges`, `/search`, `/activity`, and collection list/detail endpoints under `/applications`, `/pledges`, `/reservations`, and `/passes`. Admin mutations use `POST`, `PATCH`, and `DELETE` on those collections; CSV export is at `/api/admin/export.csv?type=applications` (or another collection). Every route under `/api/admin/*` requires the same token.
 
-Status changes affect live public totals and capacity: cancelled pledges stop counting toward the book goal, revoked passes stop appearing as active, and waitlisted/cancelled reservations do not consume seats. A reservation’s WeChat ID is unique per trek while that reservation is open. Changing a record, adding a private note, or removing it is recorded in the activity log.
+Status changes affect live public totals and capacity: cancelled pledges stop counting toward the book goal, revoked passes stop appearing as active, and waitlisted/cancelled reservations do not consume seats. A reservation’s WeChat ID is unique per trek while that reservation is open. Changing a record, adding a private note, or removing it is recorded in the activity log. The public homepage polls for live changes; its update feed uses generic messages and never publishes names, WeChat IDs, private notes, or internal activity summaries.
 
 ## Deploy on Vercel
 

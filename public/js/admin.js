@@ -927,19 +927,31 @@
     setTimeout(() => { if (!els.modal.classList.contains('open')) els.modal.hidden = true; }, 220);
   }
 
-  function askConfirm(title, message, confirmText = 'Confirm', danger = false) {
+  function askConfirm(title, message, confirmText = 'Confirm', danger = false, requiredPhrase = '') {
+    const yes = $('#confirmYes');
+    const phraseWrap = $('#confirmPhraseWrap');
+    const phraseInput = $('#confirmPhrase');
     $('#confirmTitle').textContent = title;
     $('#confirmBody').textContent = message;
-    $('#confirmYes').textContent = confirmText;
-    $('#confirmYes').classList.toggle('btn-danger', danger);
-    $('#confirmYes').classList.toggle('btn-ink', !danger);
+    $('#confirmPhraseText').textContent = requiredPhrase;
+    phraseInput.value = '';
+    phraseInput.dataset.expected = requiredPhrase;
+    phraseWrap.hidden = !requiredPhrase;
+    yes.textContent = confirmText;
+    yes.disabled = Boolean(requiredPhrase);
+    yes.classList.toggle('btn-danger', danger);
+    yes.classList.toggle('btn-ink', !danger);
     els.confirm.hidden = false;
-    requestAnimationFrame(() => { els.confirm.classList.add('open'); syncBodyLock(); });
-    $('#confirmYes').focus();
+    requestAnimationFrame(() => {
+      els.confirm.classList.add('open');
+      syncBodyLock();
+      (requiredPhrase ? phraseInput : yes).focus();
+    });
     return new Promise((resolve) => { state.confirmResolve = resolve; });
   }
 
   function resolveConfirm(value) {
+    if (value && $('#confirmYes').disabled) return;
     els.confirm.classList.remove('open');
     syncBodyLock();
     setTimeout(() => { if (!els.confirm.classList.contains('open')) els.confirm.hidden = true; }, 220);
@@ -1170,6 +1182,30 @@
     } catch (err) { toast(err.message); }
   }
 
+  async function clearAllData() {
+    const ok = await askConfirm(
+      'Clear all club data?',
+      'This permanently deletes every saved application, pledge, visitor pass, trek reservation, and activity-log entry. The fixed 347-book historical baseline is not a saved pledge and will remain in public totals. The desk will stay empty after restart. This cannot be undone.',
+      'Clear all data',
+      true,
+      'CLEAR ALL DATA'
+    );
+    if (!ok) return;
+    try {
+      const result = await api('/api/admin/clear-all', { method: 'POST', body: { confirm: 'CLEAR ALL DATA' } });
+      state.selected.clear();
+      setDemo(false);
+      closeDrawer({ noHash: true });
+      closeModal();
+      if (location.hash === '#/overview') await renderRoute({ quiet: true });
+      else location.hash = '#/overview';
+      updateBadges().catch(() => {});
+      const records = ['applications', 'pledges', 'passes', 'reservations'].reduce((sum, key) => sum + (result.cleared?.[key] || 0), 0);
+      const history = result.cleared?.activity || 0;
+      toast(`Cleared ${nfmt(records)} records and ${nfmt(history)} activity events.`);
+    } catch (err) { toast(err.message); }
+  }
+
   function focusable(root) {
     return $$('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])', root).filter((el) => el.getClientRects().length);
   }
@@ -1257,7 +1293,14 @@
       els.demoBanner.hidden = true;
     } else if (action === 'reset-demo') {
       await resetDemo();
+    } else if (action === 'clear-all') {
+      await clearAllData();
     }
+  });
+
+  $('#confirmPhrase').addEventListener('input', (event) => {
+    const expected = event.target.dataset.expected || '';
+    $('#confirmYes').disabled = event.target.value.trim() !== expected;
   });
 
   $('#useDefault')?.addEventListener('click', () => {

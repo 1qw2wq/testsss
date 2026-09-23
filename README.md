@@ -1,4 +1,4 @@
-# Boollets Club — Explore Well
+# Hi World Club — Explore Well
 
 Refined poster site + real backend. One part industry immersion, one part hard skills, one part giving back.
 
@@ -26,9 +26,9 @@ npm start        # http://localhost:3000
 npm run dev      # with --watch reload
 ```
 
-Optional env: `PORT=3000`, `DB_PATH=./data/club.json`, `ADMIN_TOKEN=boollets-admin`.
+Optional env: `PORT=3000`, `DB_PATH=./data/club.json`, `ADMIN_TOKEN=hiworld-admin`.
 
-Admin list: `curl -H 'x-admin-token: boollets-admin' localhost:3000/api/applications`.
+Admin list: `curl -H 'x-admin-token: hiworld-admin' localhost:3000/api/applications`.
 
 ## Bug fixes vs the original single-file HTML
 

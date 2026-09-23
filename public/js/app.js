@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Boollets Club — frontend app v2
+   Hi World Club — frontend app v2
    All original poster interactions + live backend API (with offline fallback),
    gallery lightbox, trek reservations, live stats.
    ========================================================================== */
@@ -337,13 +337,13 @@
     try {
       const s = await api.get('/api/stats');
       $('#statBooks').textContent = s.books.pledged;
-      $('#statBooksGoal').textContent = '/ ' + s.books.goal;
+      $('#statBooksGoal').textContent = `of ${s.books.goal} goal`;
       $('#statMembers').textContent = s.passes + s.applications;
       $('#statSeats').textContent =
         (s.reservations.alibaba + s.reservations.refinery) + ' reserved';
     } catch {
       markOffline();
-      const local = store.get('bc_pledges', []);
+      const local = store.get('hw_pledges', []);
       const total = 347 + local.reduce((a, p) => a + (p.qty || 0), 0);
       $('#statBooks').textContent = total;
     }
@@ -451,7 +451,7 @@
       paintPledges(d.pledges.length ? d.pledges : seed);
     } catch {
       markOffline();
-      const local = store.get('bc_pledges', []);
+      const local = store.get('hw_pledges', []);
       const total = BASE + local.reduce((a, p) => a + (p.qty || 0), 0);
       paintMeter(total, animate);
       paintPledges([...local].reverse().concat(seed));
@@ -477,9 +477,9 @@
       toast(`Thank you, ${name}! ${qty} book${qty > 1 ? 's' : ''} pledged.`);
     } catch (err) {
       // Offline fallback: keep it locally so nothing is lost.
-      const local = store.get('bc_pledges', []);
+      const local = store.get('hw_pledges', []);
       local.push({ name, genre, qty, t: Date.now() });
-      store.set('bc_pledges', local);
+      store.set('hw_pledges', local);
       const total = BASE + local.reduce((a, p) => a + (p.qty || 0), 0);
       paintMeter(total, true);
       paintPledges([...local].reverse().concat(seed));
@@ -547,7 +547,7 @@
       btn.disabled = true;
       try {
         const d = await api.post('/api/passes', { name, track: pTrack.value });
-        store.set('bc_pass', d.pass);
+        store.set('hw_pass', d.pass);
         applyPass(d.pass);
         loadRecentPasses();
         loadStats();
@@ -555,7 +555,7 @@
       } catch (err) {
         if (!api.online || /fetch|network|timeout/i.test(err.message)) {
           const p = { name, track: pTrack.value };
-          store.set('bc_pass', p);
+          store.set('hw_pass', p);
           applyPass(p);
           markOffline();
           toast(`Pass issued offline to ${name}.`);
@@ -571,11 +571,11 @@
       pName.value = '';
       pTrack.value = 'All-rounder';
       renderPreview();
-      store.set('bc_pass', null);
+      store.set('hw_pass', null);
       applyPass(null);
       toast('Pass reset');
     });
-    const savedPass = store.get('bc_pass', null);
+    const savedPass = store.get('hw_pass', null);
     if (savedPass && savedPass.name) {
       pName.value = savedPass.name;
       if ([...pTrack.options].some((o) => o.value === savedPass.track)) pTrack.value = savedPass.track;
@@ -615,9 +615,9 @@
         loadStats();
       } catch (err) {
         if (!api.online || /fetch|network|timeout/i.test(err.message)) {
-          const apps = store.get('bc_apps', []);
+          const apps = store.get('hw_apps', []);
           apps.push({ ...data, t: Date.now() });
-          store.set('bc_apps', apps);
+          store.set('hw_apps', apps);
           markOffline();
           $('#joinDoneName').textContent = data.name.split(' ')[0];
           $('#joinFormWrap').hidden = true;
@@ -713,6 +713,22 @@
     { threshold: 0.15 }
   );
   $$('.reveal, #pillarGrid').forEach((el) => io.observe(el));
+
+  /* ---------------- hero pointer parallax ---------------- */
+  const poster = $('#top');
+  if (
+    poster &&
+    matchMedia('(pointer:fine)').matches &&
+    !matchMedia('(prefers-reduced-motion: reduce)').matches
+  ) {
+    poster.addEventListener('pointermove', (e) => {
+      const r = poster.getBoundingClientRect();
+      poster.style.setProperty('--px', ((e.clientX - r.left) / r.width - 0.5).toFixed(3));
+      poster.style.setProperty('--py', ((e.clientY - r.top) / r.height - 0.5).toFixed(3));
+      poster.classList.add('parallax');
+    }, { passive: true });
+    poster.addEventListener('pointerleave', () => poster.classList.remove('parallax'));
+  }
 
   /* ---------------- boot ---------------- */
   fitAll();

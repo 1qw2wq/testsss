@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Boollets Club backend — Express + zero-dependency JSON file store.
+ * Hi World Club backend — Express + zero-dependency JSON file store.
  * Serves the static site from /public and exposes a JSON API under /api.
  *
  * API:
@@ -28,7 +28,7 @@ const { stmts } = require('./db');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'boollets-admin';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'hiworld-admin';
 const BASE_BOOKS = 347;
 const BOOK_GOAL = 500;
 
@@ -223,7 +223,7 @@ app.use((err, req, res, next) => {
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 
 if (require.main === module) {
-  app.listen(PORT, '0.0.0.0', () => console.log(`Boollets Club running on http://0.0.0.0:${PORT}`));
+  app.listen(PORT, '0.0.0.0', () => console.log(`Hi World Club running on http://0.0.0.0:${PORT}`));
 }
 
 module.exports = app;

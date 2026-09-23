@@ -1,7 +1,7 @@
 {
-  "name": "boollets-club",
+  "name": "hi-world-club",
   "version": "2.0.0",
-  "description": "Boollets Club — Explore Well. Refined frontend + Express + SQLite backend.",
+  "description": "Hi World Club — Explore Well. Refined frontend + Express + JSON backend.",
   "type": "commonjs",
   "main": "server/server.js",
   "scripts": {

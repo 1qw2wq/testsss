@@ -1,0 +1,3566 @@
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..e3ad628
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,5 @@
++node_modules/
++data/
++*.log
++.env
++.DS_Store
+diff --git a/README.md b/README.md
+index c175b11..63b8f01 100644
+--- a/README.md
++++ b/README.md
+@@ -1 +1,73 @@
+-# testsss
++# Hi World Club — Explore Well
++
++Refined poster site + real backend. One part industry immersion, one part hard skills, one part giving back.
++
++## What's inside
++
++- **Frontend** (`public/`) — the original interactive poster, refined and split into `index.html` + `css/styles.css` + `js/app.js`
++  - HI (vials + NFC/member lanyards) and WORLD (books, pens, remotes, tubes) compositions
++  - New **Moments** photo gallery with lightbox (6 custom photos in `public/images/`)
++  - Photos inside every modal (treks, workshop, book drive, cohort)
++  - Live stats band, live trek seat counts, recent passes & pledges
++  - Works **offline**: forms fall back to localStorage when the API is unreachable
++- **Backend** (`server/`) — Node.js + Express + zero-dependency JSON file store (file at `data/club.json`, no native builds)
++  - `GET /api/health`, `GET /api/treks`, `GET /api/stats`
++  - `GET/POST /api/pledges` — book-drive pledges
++  - `POST /api/applications` (+ admin `GET`) — join applications
++  - `POST /api/passes`, `GET /api/passes/latest` — cohort visitor passes
++  - `GET/POST /api/reservations` — trek seat reservations with capacity + duplicate guards
++  - Validation, rate limiting, security headers (preview/iframe-friendly)
++
++## Run it
++
++```bash
++npm install
++npm start        # http://localhost:3000
++npm run dev      # with --watch reload
++```
++
++Optional env: `PORT=3000`, `DB_PATH=./data/club.json`, `ADMIN_TOKEN=hiworld-admin`.
++
++Open the admin dashboard at `/admin.html` (or the small **Admin** link in the page footer),
++paste your `ADMIN_TOKEN`, and browse stats, join applications, trek reservations,
++book pledges, and visitor passes. API equivalent:
++`curl -H 'x-admin-token: hiworld-admin' localhost:3000/api/applications`.
++
++## Deploy on Vercel
++
++Import the repo in Vercel — no build step needed (`vercel.json` routes `/api/*`
++to the Express app as a serverless function; `/public` is served by the CDN).
++
++Environment variables to set in Vercel → Project → Settings → Environment Variables:
++
++| Variable      | Required? | What to enter |
++| ------------- | --------- | ------------- |
++| `ADMIN_TOKEN` | **Yes** (recommended) | A long random secret, e.g. `openssl rand -hex 32`. Used as `x-admin-token` to list join applications. |
++| `DB_PATH`     | No | Leave unset — the app defaults to `/tmp/hiworld-club.json` on Vercel. |
++| `PORT`        | No | Vercel injects this itself; not used by serverless functions. |
++| `NODE_ENV`    | No | Vercel sets `production` automatically. |
++
++> ⚠️ **Persistence note:** Vercel's serverless filesystem is ephemeral — pledges,
++> applications, passes, and reservations reset on redeploys/cold starts. For
++> permanent storage, either host the backend on Render/Railway/Fly/your own VPS
++> (where `data/club.json` persists), or swap `server/db.js` for Vercel Postgres/KV.
++
++## Bug fixes vs the original single-file HTML
++
++- Fixed remote hover `transform: scale(var(--s))` that shrunk the remote (parent is already scaled)
++- Focus trap now uses `getClientRects()` (reliable for all layouts) instead of `offsetParent`
++- Join modal resets to the form when reopened (no stale success screen)
++- Tome buttons inside the Q3 quadrant removed from tab order (`tabindex="-1"`) — no nested-tab-stop trap
++- Blackout layer is keyboard reachable; lightbox has its own Esc handling
++- Quantity stepper has a labelled group; deck swipe handles `pointercancel`
++- All `fetch` calls time out (8s) and degrade to offline mode with a status chip
++
++## Project layout
++
++```
++public/
++  index.html  css/styles.css  js/app.js  images/*.jpg
++server/
++  server.js  db.js
++data/         # json store (git-ignored)
++```
+diff --git a/api/index.js b/api/index.js
+new file mode 100644
+index 0000000..9d07df6
+--- /dev/null
++++ b/api/index.js
+@@ -0,0 +1,8 @@
++'use strict';
++
++// Vercel serverless entry — an Express app is a valid (req, res) handler,
++// so Vercel can invoke it directly. Static files in /public are served by
++// Vercel's CDN; only /api/* is rewritten here (see vercel.json).
++const app = require('../server/server');
++
++module.exports = app;
+diff --git a/package-lock.json b/package-lock.json
+new file mode 100644
+index 0000000..d174edf
+--- /dev/null
++++ b/package-lock.json
+@@ -0,0 +1,939 @@
++{
++  "name": "hi-world-club",
++  "version": "2.0.0",
++  "lockfileVersion": 3,
++  "requires": true,
++  "packages": {
++    "": {
++      "name": "hi-world-club",
++      "version": "2.0.0",
++      "dependencies": {
++        "cors": "^2.8.5",
++        "express": "^4.21.2",
++        "express-rate-limit": "^7.5.0",
++        "helmet": "^8.0.0",
++        "morgan": "^1.10.0"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/accepts": {
++      "version": "1.3.8",
++      "resolved": "https://registry.npmjs.org/accepts/-/accepts-1.3.8.tgz",
++      "integrity": "sha512-PYAthTa2m2VKxuvSD3DPC/Gy+U+sOA1LAuT8mkmRuvw+NACSaeXEQ+NHcVF7rONl6qcaxV3Uuemwawk+7+SJLw==",
++      "license": "MIT",
++      "dependencies": {
++        "mime-types": "~2.1.34",
++        "negotiator": "0.6.3"
++      },
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/array-flatten": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/array-flatten/-/array-flatten-1.1.1.tgz",
++      "integrity": "sha512-PCVAQswWemu6UdxsDFFX/+gVeYqKAod3D3UVm91jHwynguOwAvYPhx8nNlM++NqRcK6CxxpUafjmhIdKiHibqg==",
++      "license": "MIT"
++    },
++    "node_modules/basic-auth": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/basic-auth/-/basic-auth-2.0.1.tgz",
++      "integrity": "sha512-NF+epuEdnUYVlGuhaxbbq+dvJttwLnGY+YixlXlME5KpQ5W3CnXA5cVTneY3SPbPDRkcjMbifrwmFYcClgOZeg==",
++      "license": "MIT",
++      "dependencies": {
++        "safe-buffer": "5.1.2"
++      },
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/basic-auth/node_modules/safe-buffer": {
++      "version": "5.1.2",
++      "resolved": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.1.2.tgz",
++      "integrity": "sha512-Gd2UZBJDkXlY7GbJxfsE8/nvKkUEU1G38c1siN6QP6a9PT9MmHB8GnpscSmMJSoF8LOIrt8ud/wPtojys4G6+g==",
++      "license": "MIT"
++    },
++    "node_modules/body-parser": {
++      "version": "1.20.8",
++      "resolved": "https://registry.npmjs.org/body-parser/-/body-parser-1.20.8.tgz",
++      "integrity": "sha512-JNcyFQ64OiijEkPzUBTCe+hyPXUD/3LEldGQ6iF5LR1w00mx9o7xtDWHXBY2iItjdCFGoilOLNQbH943ut7pHA==",
++      "license": "MIT",
++      "dependencies": {
++        "bytes": "~3.1.2",
++        "content-type": "~1.0.5",
++        "debug": "2.6.9",
++        "depd": "2.0.0",
++        "destroy": "~1.2.0",
++        "http-errors": "~2.0.1",
++        "iconv-lite": "~0.4.24",
++        "on-finished": "~2.4.1",
++        "qs": "~6.16.0",
++        "raw-body": "~2.5.3",
++        "type-is": "~1.6.18",
++        "unpipe": "~1.0.0"
++      },
++      "engines": {
++        "node": ">= 0.8",
++        "npm": "1.2.8000 || >= 1.4.16"
++      }
++    },
++    "node_modules/bytes": {
++      "version": "3.1.2",
++      "resolved": "https://registry.npmjs.org/bytes/-/bytes-3.1.2.tgz",
++      "integrity": "sha512-/Nf7TyzTx6S3yRJObOAV7956r8cr2+Oj8AC5dt8wSP3BQAoeX58NoHyCU8P8zGkNXStjTSi6fzO6F0pBdcYbEg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/call-bind-apply-helpers": {
++      "version": "1.0.2",
++      "resolved": "https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz",
++      "integrity": "sha512-Sp1ablJ0ivDkSzjcaJdxEunN5/XvksFJ2sMBFfq6x0ryhQV/2b/KwFe21cMpmHtPOSij8K99/wSfoEuTObmuMQ==",
++      "license": "MIT",
++      "dependencies": {
++        "es-errors": "^1.3.0",
++        "function-bind": "^1.1.2"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/call-bound": {
++      "version": "1.0.4",
++      "resolved": "https://registry.npmjs.org/call-bound/-/call-bound-1.0.4.tgz",
++      "integrity": "sha512-+ys997U96po4Kx/ABpBCqhA9EuxJaQWDQg7295H4hBphv3IZg0boBKuwYpt4YXp6MZ5AmZQnU/tyMTlRpaSejg==",
++      "license": "MIT",
++      "dependencies": {
++        "call-bind-apply-helpers": "^1.0.2",
++        "get-intrinsic": "^1.3.0"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/content-disposition": {
++      "version": "0.5.4",
++      "resolved": "https://registry.npmjs.org/content-disposition/-/content-disposition-0.5.4.tgz",
++      "integrity": "sha512-FveZTNuGw04cxlAiWbzi6zTAL/lhehaWbTtgluJh4/E95DqMwTmha3KZN1aAWA8cFIhHzMZUvLevkw5Rqk+tSQ==",
++      "license": "MIT",
++      "dependencies": {
++        "safe-buffer": "5.2.1"
++      },
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/content-type": {
++      "version": "1.0.5",
++      "resolved": "https://registry.npmjs.org/content-type/-/content-type-1.0.5.tgz",
++      "integrity": "sha512-nTjqfcBFEipKdXCv4YDQWCfmcLZKm81ldF0pAopTvyrFGVbcR6P/VAAd5G7N+0tTr8QqiU0tFadD6FK4NtJwOA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/cookie": {
++      "version": "0.7.2",
++      "resolved": "https://registry.npmjs.org/cookie/-/cookie-0.7.2.tgz",
++      "integrity": "sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/cookie-signature": {
++      "version": "1.0.7",
++      "resolved": "https://registry.npmjs.org/cookie-signature/-/cookie-signature-1.0.7.tgz",
++      "integrity": "sha512-NXdYc3dLr47pBkpUCHtKSwIOQXLVn8dZEuywboCOJY/osA0wFSLlSawr3KN8qXJEyX66FcONTH8EIlVuK0yyFA==",
++      "license": "MIT"
++    },
++    "node_modules/cors": {
++      "version": "2.8.6",
++      "resolved": "https://registry.npmjs.org/cors/-/cors-2.8.6.tgz",
++      "integrity": "sha512-tJtZBBHA6vjIAaF6EnIaq6laBBP9aq/Y3ouVJjEfoHbRBcHBAHYcMh/w8LDrk2PvIMMq8gmopa5D4V8RmbrxGw==",
++      "license": "MIT",
++      "dependencies": {
++        "object-assign": "^4",
++        "vary": "^1"
++      },
++      "engines": {
++        "node": ">= 0.10"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/express"
++      }
++    },
++    "node_modules/debug": {
++      "version": "2.6.9",
++      "resolved": "https://registry.npmjs.org/debug/-/debug-2.6.9.tgz",
++      "integrity": "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==",
++      "license": "MIT",
++      "dependencies": {
++        "ms": "2.0.0"
++      }
++    },
++    "node_modules/depd": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/depd/-/depd-2.0.0.tgz",
++      "integrity": "sha512-g7nH6P6dyDioJogAAGprGpCtVImJhpPk/roCzdb3fIh61/s/nPsfR6onyMwkCAR/OlC3yBC0lESvUoQEAssIrw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/destroy": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/destroy/-/destroy-1.2.0.tgz",
++      "integrity": "sha512-2sJGJTaXIIaR1w4iJSNoN0hnMY7Gpc/n8D4qSCJw8QqFWXf7cuAgnEHxBpweaVcPevC2l3KpjYCx3NypQQgaJg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8",
++        "npm": "1.2.8000 || >= 1.4.16"
++      }
++    },
++    "node_modules/dunder-proto": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz",
++      "integrity": "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==",
++      "license": "MIT",
++      "dependencies": {
++        "call-bind-apply-helpers": "^1.0.1",
++        "es-errors": "^1.3.0",
++        "gopd": "^1.2.0"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/ee-first": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/ee-first/-/ee-first-1.1.1.tgz",
++      "integrity": "sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==",
++      "license": "MIT"
++    },
++    "node_modules/encodeurl": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/encodeurl/-/encodeurl-2.0.0.tgz",
++      "integrity": "sha512-Q0n9HRi4m6JuGIV1eFlmvJB7ZEVxu93IrMyiMsGC0lrMJMWzRgx6WGquyfQgZVb31vhGgXnfmPNNXmxnOkRBrg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/es-define-property": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz",
++      "integrity": "sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/es-errors": {
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz",
++      "integrity": "sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/es-object-atoms": {
++      "version": "1.1.2",
++      "resolved": "https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.2.tgz",
++      "integrity": "sha512-HWcBoN6NileqtSydK2FqHbS/LoDd2pqrnQHLyJzBj4kOp/ky2MWMN694xOfkK8/SnUsW2DH7EfyVlydKCsm1Zw==",
++      "license": "MIT",
++      "dependencies": {
++        "es-errors": "^1.3.0"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/escape-html": {
++      "version": "1.0.3",
++      "resolved": "https://registry.npmjs.org/escape-html/-/escape-html-1.0.3.tgz",
++      "integrity": "sha512-NiSupZ4OeuGwr68lGIeym/ksIZMJodUGOSCZ/FSnTxcrekbvqrgdUxlJOMpijaKZVjAJrWrGs/6Jy8OMuyj9ow==",
++      "license": "MIT"
++    },
++    "node_modules/etag": {
++      "version": "1.8.1",
++      "resolved": "https://registry.npmjs.org/etag/-/etag-1.8.1.tgz",
++      "integrity": "sha512-aIL5Fx7mawVa300al2BnEE4iNvo1qETxLrPI/o05L7z6go7fCw1J6EQmbK4FmJ2AS7kgVF/KEZWufBfdClMcPg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/express": {
++      "version": "4.22.3",
++      "resolved": "https://registry.npmjs.org/express/-/express-4.22.3.tgz",
++      "integrity": "sha512-Bdcs4+3qlpVlx2NRn6fgX2Ue2/gGRaPeawebgclM0ERSCqDpA+owF1fdPwjJUTAJWMTuAaxjDf+hzb0/4eKvvw==",
++      "license": "MIT",
++      "dependencies": {
++        "accepts": "~1.3.8",
++        "array-flatten": "1.1.1",
++        "body-parser": "~1.20.5",
++        "content-disposition": "~0.5.4",
++        "content-type": "~1.0.4",
++        "cookie": "~0.7.1",
++        "cookie-signature": "~1.0.6",
++        "debug": "2.6.9",
++        "depd": "2.0.0",
++        "encodeurl": "~2.0.0",
++        "escape-html": "~1.0.3",
++        "etag": "~1.8.1",
++        "finalhandler": "~1.3.1",
++        "fresh": "~0.5.2",
++        "http-errors": "~2.0.0",
++        "merge-descriptors": "1.0.3",
++        "methods": "~1.1.2",
++        "on-finished": "~2.4.1",
++        "parseurl": "~1.3.3",
++        "path-to-regexp": "~0.1.13",
++        "proxy-addr": "~2.0.7",
++        "qs": "~6.16.0",
++        "range-parser": "~1.2.1",
++        "safe-buffer": "5.2.1",
++        "send": "~0.19.0",
++        "serve-static": "~1.16.2",
++        "setprototypeof": "1.2.0",
++        "statuses": "~2.0.1",
++        "type-is": "~1.6.18",
++        "utils-merge": "1.0.1",
++        "vary": "~1.1.2"
++      },
++      "engines": {
++        "node": ">= 0.10.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/express"
++      }
++    },
++    "node_modules/express-rate-limit": {
++      "version": "7.5.1",
++      "resolved": "https://registry.npmjs.org/express-rate-limit/-/express-rate-limit-7.5.1.tgz",
++      "integrity": "sha512-7iN8iPMDzOMHPUYllBEsQdWVB6fPDMPqwjBaFrgr4Jgr/+okjvzAy+UHlYYL/Vs0OsOrMkwS6PJDkFlJwoxUnw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 16"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/express-rate-limit"
++      },
++      "peerDependencies": {
++        "express": ">= 4.11"
++      }
++    },
++    "node_modules/finalhandler": {
++      "version": "1.3.2",
++      "resolved": "https://registry.npmjs.org/finalhandler/-/finalhandler-1.3.2.tgz",
++      "integrity": "sha512-aA4RyPcd3badbdABGDuTXCMTtOneUCAYH/gxoYRTZlIJdF0YPWuGqiAsIrhNnnqdXGswYk6dGujem4w80UJFhg==",
++      "license": "MIT",
++      "dependencies": {
++        "debug": "2.6.9",
++        "encodeurl": "~2.0.0",
++        "escape-html": "~1.0.3",
++        "on-finished": "~2.4.1",
++        "parseurl": "~1.3.3",
++        "statuses": "~2.0.2",
++        "unpipe": "~1.0.0"
++      },
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/forwarded": {
++      "version": "0.2.0",
++      "resolved": "https://registry.npmjs.org/forwarded/-/forwarded-0.2.0.tgz",
++      "integrity": "sha512-buRG0fpBtRHSTCOASe6hD258tEubFoRLb4ZNA6NxMVHNw2gOcwHo9wyablzMzOA5z9xA9L1KNjk/Nt6MT9aYow==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/fresh": {
++      "version": "0.5.2",
++      "resolved": "https://registry.npmjs.org/fresh/-/fresh-0.5.2.tgz",
++      "integrity": "sha512-zJ2mQYM18rEFOudeV4GShTGIQ7RbzA7ozbU9I/XBpm7kqgMywgmylMwXHxZJmkVoYkna9d2pVXVXPdYTP9ej8Q==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/function-bind": {
++      "version": "1.1.2",
++      "resolved": "https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz",
++      "integrity": "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==",
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/get-intrinsic": {
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz",
++      "integrity": "sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==",
++      "license": "MIT",
++      "dependencies": {
++        "call-bind-apply-helpers": "^1.0.2",
++        "es-define-property": "^1.0.1",
++        "es-errors": "^1.3.0",
++        "es-object-atoms": "^1.1.1",
++        "function-bind": "^1.1.2",
++        "get-proto": "^1.0.1",
++        "gopd": "^1.2.0",
++        "has-symbols": "^1.1.0",
++        "hasown": "^2.0.2",
++        "math-intrinsics": "^1.1.0"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/get-proto": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz",
++      "integrity": "sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==",
++      "license": "MIT",
++      "dependencies": {
++        "dunder-proto": "^1.0.1",
++        "es-object-atoms": "^1.0.0"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/gopd": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz",
++      "integrity": "sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/has-symbols": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz",
++      "integrity": "sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/hasown": {
++      "version": "2.0.4",
++      "resolved": "https://registry.npmjs.org/hasown/-/hasown-2.0.4.tgz",
++      "integrity": "sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==",
++      "license": "MIT",
++      "dependencies": {
++        "function-bind": "^1.1.2"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/helmet": {
++      "version": "8.3.0",
++      "resolved": "https://registry.npmjs.org/helmet/-/helmet-8.3.0.tgz",
++      "integrity": "sha512-Qgpiaws3Sm30Av8Eah6sjMCZZwjlBu+E68rhpCWBshY1lb09HtLwj5GviX0OyQIn+ulUS0iX0AxN5n3tLZzz1w==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=18.0.0"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/EvanHahn"
++      }
++    },
++    "node_modules/http-errors": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/http-errors/-/http-errors-2.0.1.tgz",
++      "integrity": "sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==",
++      "license": "MIT",
++      "dependencies": {
++        "depd": "~2.0.0",
++        "inherits": "~2.0.4",
++        "setprototypeof": "~1.2.0",
++        "statuses": "~2.0.2",
++        "toidentifier": "~1.0.1"
++      },
++      "engines": {
++        "node": ">= 0.8"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/express"
++      }
++    },
++    "node_modules/iconv-lite": {
++      "version": "0.4.24",
++      "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.4.24.tgz",
++      "integrity": "sha512-v3MXnZAcvnywkTUEZomIActle7RXXeedOR31wwl7VlyoXO4Qi9arvSenNQWne1TcRwhCL1HwLI21bEqdpj8/rA==",
++      "license": "MIT",
++      "dependencies": {
++        "safer-buffer": ">= 2.1.2 < 3"
++      },
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/inherits": {
++      "version": "2.0.4",
++      "resolved": "https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz",
++      "integrity": "sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==",
++      "license": "ISC"
++    },
++    "node_modules/ipaddr.js": {
++      "version": "1.9.1",
++      "resolved": "https://registry.npmjs.org/ipaddr.js/-/ipaddr.js-1.9.1.tgz",
++      "integrity": "sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.10"
++      }
++    },
++    "node_modules/math-intrinsics": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz",
++      "integrity": "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      }
++    },
++    "node_modules/media-typer": {
++      "version": "0.3.0",
++      "resolved": "https://registry.npmjs.org/media-typer/-/media-typer-0.3.0.tgz",
++      "integrity": "sha512-dq+qelQ9akHpcOl/gUVRTxVIOkAJ1wR3QAvb4RsVjS8oVoFjDGTc679wJYmUmknUF5HwMLOgb5O+a3KxfWapPQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/merge-descriptors": {
++      "version": "1.0.3",
++      "resolved": "https://registry.npmjs.org/merge-descriptors/-/merge-descriptors-1.0.3.tgz",
++      "integrity": "sha512-gaNvAS7TZ897/rVaZ0nMtAyxNyi/pdbjbAwUpFQpN70GqnVfOiXpeUUMKRBmzXaSQ8DdTX4/0ms62r2K+hE6mQ==",
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
++    "node_modules/methods": {
++      "version": "1.1.2",
++      "resolved": "https://registry.npmjs.org/methods/-/methods-1.1.2.tgz",
++      "integrity": "sha512-iclAHeNqNm68zFtnZ0e+1L2yUIdvzNoauKU4WBA3VvH/vPFieF7qfRlwUZU+DA9P9bPXIS90ulxoUoCH23sV2w==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/mime": {
++      "version": "1.6.0",
++      "resolved": "https://registry.npmjs.org/mime/-/mime-1.6.0.tgz",
++      "integrity": "sha512-x0Vn8spI+wuJ1O6S7gnbaQg8Pxh4NNHb7KSINmEWKiPE4RKOplvijn+NkmYmmRgP68mc70j2EbeTFRsrswaQeg==",
++      "license": "MIT",
++      "bin": {
++        "mime": "cli.js"
++      },
++      "engines": {
++        "node": ">=4"
++      }
++    },
++    "node_modules/mime-db": {
++      "version": "1.52.0",
++      "resolved": "https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz",
++      "integrity": "sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/mime-types": {
++      "version": "2.1.35",
++      "resolved": "https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz",
++      "integrity": "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==",
++      "license": "MIT",
++      "dependencies": {
++        "mime-db": "1.52.0"
++      },
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/morgan": {
++      "version": "1.12.1",
++      "resolved": "https://registry.npmjs.org/morgan/-/morgan-1.12.1.tgz",
++      "integrity": "sha512-tljKC0ex20AjO58Ob/eZ53JloycbVswbVNCHx6V6VLGzqt/w8dIynVGL0G8qVjNKwiA7sYSogCrN6QtJ82IV+g==",
++      "license": "MIT",
++      "dependencies": {
++        "basic-auth": "~2.0.1",
++        "debug": "2.6.9",
++        "depd": "~2.0.0",
++        "on-finished": "~2.4.1",
++        "on-headers": "~1.1.0"
++      },
++      "engines": {
++        "node": ">= 0.8.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/express"
++      }
++    },
++    "node_modules/ms": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz",
++      "integrity": "sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==",
++      "license": "MIT"
++    },
++    "node_modules/negotiator": {
++      "version": "0.6.3",
++      "resolved": "https://registry.npmjs.org/negotiator/-/negotiator-0.6.3.tgz",
++      "integrity": "sha512-+EUsqGPLsM+j/zdChZjsnX51g4XrHFOIXwfnCVPGlQk/k5giakcKsuxCObBRu6DSm9opw/O6slWbJdghQM4bBg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/object-assign": {
++      "version": "4.1.1",
++      "resolved": "https://registry.npmjs.org/object-assign/-/object-assign-4.1.1.tgz",
++      "integrity": "sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/object-inspect": {
++      "version": "1.13.4",
++      "resolved": "https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz",
++      "integrity": "sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/on-finished": {
++      "version": "2.4.1",
++      "resolved": "https://registry.npmjs.org/on-finished/-/on-finished-2.4.1.tgz",
++      "integrity": "sha512-oVlzkg3ENAhCk2zdv7IJwd/QUD4z2RxRwpkcGY8psCVcCYZNq4wYnVWALHM+brtuJjePWiYF/ClmuDr8Ch5+kg==",
++      "license": "MIT",
++      "dependencies": {
++        "ee-first": "1.1.1"
++      },
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/on-headers": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/on-headers/-/on-headers-1.1.0.tgz",
++      "integrity": "sha512-737ZY3yNnXy37FHkQxPzt4UZ2UWPWiCZWLvFZ4fu5cueciegX0zGPnrlY6bwRg4FdQOe9YU8MkmJwGhoMybl8A==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/parseurl": {
++      "version": "1.3.3",
++      "resolved": "https://registry.npmjs.org/parseurl/-/parseurl-1.3.3.tgz",
++      "integrity": "sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/path-to-regexp": {
++      "version": "0.1.13",
++      "resolved": "https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-0.1.13.tgz",
++      "integrity": "sha512-A/AGNMFN3c8bOlvV9RreMdrv7jsmF9XIfDeCd87+I8RNg6s78BhJxMu69NEMHBSJFxKidViTEdruRwEk/WIKqA==",
++      "license": "MIT"
++    },
++    "node_modules/proxy-addr": {
++      "version": "2.0.8",
++      "resolved": "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz",
++      "integrity": "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==",
++      "license": "MIT",
++      "dependencies": {
++        "forwarded": "0.2.0",
++        "ipaddr.js": "1.9.1"
++      },
++      "engines": {
++        "node": ">= 0.10"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/express"
++      }
++    },
++    "node_modules/qs": {
++      "version": "6.16.0",
++      "resolved": "https://registry.npmjs.org/qs/-/qs-6.16.0.tgz",
++      "integrity": "sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==",
++      "license": "BSD-3-Clause",
++      "dependencies": {
++        "es-define-property": "^1.0.1",
++        "side-channel": "^1.1.1"
++      },
++      "engines": {
++        "node": ">=0.6"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/range-parser": {
++      "version": "1.2.1",
++      "resolved": "https://registry.npmjs.org/range-parser/-/range-parser-1.2.1.tgz",
++      "integrity": "sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/raw-body": {
++      "version": "2.5.3",
++      "resolved": "https://registry.npmjs.org/raw-body/-/raw-body-2.5.3.tgz",
++      "integrity": "sha512-s4VSOf6yN0rvbRZGxs8Om5CWj6seneMwK3oDb4lWDH0UPhWcxwOWw5+qk24bxq87szX1ydrwylIOp2uG1ojUpA==",
++      "license": "MIT",
++      "dependencies": {
++        "bytes": "~3.1.2",
++        "http-errors": "~2.0.1",
++        "iconv-lite": "~0.4.24",
++        "unpipe": "~1.0.0"
++      },
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/safe-buffer": {
++      "version": "5.2.1",
++      "resolved": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz",
++      "integrity": "sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ==",
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/feross"
++        },
++        {
++          "type": "patreon",
++          "url": "https://www.patreon.com/feross"
++        },
++        {
++          "type": "consulting",
++          "url": "https://feross.org/support"
++        }
++      ],
++      "license": "MIT"
++    },
++    "node_modules/safer-buffer": {
++      "version": "2.1.2",
++      "resolved": "https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz",
++      "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
++      "license": "MIT"
++    },
++    "node_modules/send": {
++      "version": "0.19.2",
++      "resolved": "https://registry.npmjs.org/send/-/send-0.19.2.tgz",
++      "integrity": "sha512-VMbMxbDeehAxpOtWJXlcUS5E8iXh6QmN+BkRX1GARS3wRaXEEgzCcB10gTQazO42tpNIya8xIyNx8fll1OFPrg==",
++      "license": "MIT",
++      "dependencies": {
++        "debug": "2.6.9",
++        "depd": "2.0.0",
++        "destroy": "1.2.0",
++        "encodeurl": "~2.0.0",
++        "escape-html": "~1.0.3",
++        "etag": "~1.8.1",
++        "fresh": "~0.5.2",
++        "http-errors": "~2.0.1",
++        "mime": "1.6.0",
++        "ms": "2.1.3",
++        "on-finished": "~2.4.1",
++        "range-parser": "~1.2.1",
++        "statuses": "~2.0.2"
++      },
++      "engines": {
++        "node": ">= 0.8.0"
++      }
++    },
++    "node_modules/send/node_modules/ms": {
++      "version": "2.1.3",
++      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
++      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
++      "license": "MIT"
++    },
++    "node_modules/serve-static": {
++      "version": "1.16.3",
++      "resolved": "https://registry.npmjs.org/serve-static/-/serve-static-1.16.3.tgz",
++      "integrity": "sha512-x0RTqQel6g5SY7Lg6ZreMmsOzncHFU7nhnRWkKgWuMTu5NN0DR5oruckMqRvacAN9d5w6ARnRBXl9xhDCgfMeA==",
++      "license": "MIT",
++      "dependencies": {
++        "encodeurl": "~2.0.0",
++        "escape-html": "~1.0.3",
++        "parseurl": "~1.3.3",
++        "send": "~0.19.1"
++      },
++      "engines": {
++        "node": ">= 0.8.0"
++      }
++    },
++    "node_modules/setprototypeof": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/setprototypeof/-/setprototypeof-1.2.0.tgz",
++      "integrity": "sha512-E5LDX7Wrp85Kil5bhZv46j8jOeboKq5JMmYM3gVGdGH8xFpPWXUMsNrlODCrkoxMEeNi/XZIwuRvY4XNwYMJpw==",
++      "license": "ISC"
++    },
++    "node_modules/side-channel": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/side-channel/-/side-channel-1.1.1.tgz",
++      "integrity": "sha512-6x6dK6zJdpTzF4sQeNYxwtvBzf6Eg4GtlesS94HOvTudUeyK2WXAaIfmDgsyslYrRBeFIlsi54AYsFGUuhmvrQ==",
++      "license": "MIT",
++      "dependencies": {
++        "es-errors": "^1.3.0",
++        "object-inspect": "^1.13.4",
++        "side-channel-list": "^1.0.1",
++        "side-channel-map": "^1.0.1",
++        "side-channel-weakmap": "^1.0.2"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/side-channel-list": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/side-channel-list/-/side-channel-list-1.0.1.tgz",
++      "integrity": "sha512-mjn/0bi/oUURjc5Xl7IaWi/OJJJumuoJFQJfDDyO46+hBWsfaVM65TBHq2eoZBhzl9EchxOijpkbRC8SVBQU0w==",
++      "license": "MIT",
++      "dependencies": {
++        "es-errors": "^1.3.0",
++        "object-inspect": "^1.13.4"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/side-channel-map": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/side-channel-map/-/side-channel-map-1.0.1.tgz",
++      "integrity": "sha512-VCjCNfgMsby3tTdo02nbjtM/ewra6jPHmpThenkTYh8pG9ucZ/1P8So4u4FGBek/BjpOVsDCMoLA/iuBKIFXRA==",
++      "license": "MIT",
++      "dependencies": {
++        "call-bound": "^1.0.2",
++        "es-errors": "^1.3.0",
++        "get-intrinsic": "^1.2.5",
++        "object-inspect": "^1.13.3"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/side-channel-weakmap": {
++      "version": "1.0.2",
++      "resolved": "https://registry.npmjs.org/side-channel-weakmap/-/side-channel-weakmap-1.0.2.tgz",
++      "integrity": "sha512-WPS/HvHQTYnHisLo9McqBHOJk2FkHO/tlpvldyrnem4aeQp4hai3gythswg6p01oSoTl58rcpiFAjF2br2Ak2A==",
++      "license": "MIT",
++      "dependencies": {
++        "call-bound": "^1.0.2",
++        "es-errors": "^1.3.0",
++        "get-intrinsic": "^1.2.5",
++        "object-inspect": "^1.13.3",
++        "side-channel-map": "^1.0.1"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/statuses": {
++      "version": "2.0.2",
++      "resolved": "https://registry.npmjs.org/statuses/-/statuses-2.0.2.tgz",
++      "integrity": "sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/toidentifier": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/toidentifier/-/toidentifier-1.0.1.tgz",
++      "integrity": "sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.6"
++      }
++    },
++    "node_modules/type-is": {
++      "version": "1.6.18",
++      "resolved": "https://registry.npmjs.org/type-is/-/type-is-1.6.18.tgz",
++      "integrity": "sha512-TkRKr9sUTxEH8MdfuCSP7VizJyzRNMjj2J2do2Jr3Kym598JVdEksuzPQCnlFPW4ky9Q+iA+ma9BGm06XQBy8g==",
++      "license": "MIT",
++      "dependencies": {
++        "media-typer": "0.3.0",
++        "mime-types": "~2.1.24"
++      },
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/unpipe": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/unpipe/-/unpipe-1.0.0.tgz",
++      "integrity": "sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/utils-merge": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/utils-merge/-/utils-merge-1.0.1.tgz",
++      "integrity": "sha512-pMZTvIkT1d+TFGvDOqodOclx0QWkkgi6Tdoa8gC8ffGAAqz9pzPTZWAybbsHHoED/ztMtkv/VoYTYyShUn81hA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4.0"
++      }
++    },
++    "node_modules/vary": {
++      "version": "1.1.2",
++      "resolved": "https://registry.npmjs.org/vary/-/vary-1.1.2.tgz",
++      "integrity": "sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8"
++      }
++    }
++  }
++}
+diff --git a/package.json b/package.json
+new file mode 100644
+index 0000000..95e9b81
+--- /dev/null
++++ b/package.json
+@@ -0,0 +1,22 @@
++{
++  "name": "hi-world-club",
++  "version": "2.0.0",
++  "description": "Hi World Club — Explore Well. Refined frontend + Express + JSON backend.",
++  "type": "commonjs",
++  "main": "server/server.js",
++  "scripts": {
++    "start": "node server/server.js",
++    "dev": "node --watch server/server.js",
++    "test": "node --test server/*.test.js"
++  },
++  "engines": {
++    "node": ">=18"
++  },
++  "dependencies": {
++    "cors": "^2.8.5",
++    "express": "^4.21.2",
++    "express-rate-limit": "^7.5.0",
++    "helmet": "^8.0.0",
++    "morgan": "^1.10.0"
++  }
++}
+diff --git a/public/admin.html b/public/admin.html
+new file mode 100644
+index 0000000..4426beb
+--- /dev/null
++++ b/public/admin.html
+@@ -0,0 +1,64 @@
++<!DOCTYPE html>
++<html lang="en">
++<head>
++<meta charset="UTF-8" />
++<meta name="viewport" content="width=device-width, initial-scale=1.0" />
++<title>Admin · Hi World Club</title>
++<meta name="robots" content="noindex, nofollow" />
++<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='10' y='6' width='12' height='22' rx='3' fill='%23ee6a24'/%3E%3Crect x='10' y='2' width='12' height='5' rx='1.5' fill='%23111'/%3E%3C/svg%3E" />
++<link rel="preconnect" href="https://fonts.googleapis.com" />
++<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
++<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&display=swap" rel="stylesheet" />
++<link rel="stylesheet" href="/css/admin.css" />
++</head>
++<body>
++<header class="ad-top">
++  <a class="ad-brand" href="/">← Hi World Club</a>
++  <span class="ad-title">Admin dashboard</span>
++  <span class="ad-status" id="adStatus"><span class="dot"></span><span id="adStatusText">Locked</span></span>
++</header>
++
++<main class="ad-main">
++  <!-- token gate -->
++  <section class="ad-gate" id="adGate">
++    <h1>Enter admin token</h1>
++    <p>This is the <code>ADMIN_TOKEN</code> from your server / Vercel environment variables.</p>
++    <form id="adUnlock" class="ad-tokenrow">
++      <input id="adToken" type="password" placeholder="Paste admin token…" autocomplete="off" aria-label="Admin token" />
++      <button class="btn-ink" type="submit">Unlock</button>
++    </form>
++    <p class="ad-err" id="adErr" hidden></p>
++  </section>
++
++  <!-- dashboard -->
++  <section id="adDash" hidden>
++    <div class="ad-bar">
++      <div class="ad-stats" id="adStats" aria-live="polite"></div>
++      <div class="ad-actions">
++        <button id="adRefresh" type="button">↻ Refresh</button>
++        <button id="adLock" type="button">🔒 Lock</button>
++      </div>
++    </div>
++
++    <nav class="ad-tabs" aria-label="Admin sections">
++      <button class="active" data-atab="apps" type="button">Join applications</button>
++      <button data-atab="res" type="button">Trek reservations</button>
++      <button data-atab="pledges" type="button">Book pledges</button>
++      <button data-atab="passes" type="button">Visitor passes</button>
++    </nav>
++
++    <div class="ad-tablewrap">
++      <table class="ad-table">
++        <thead id="adHead"></thead>
++        <tbody id="adBody"></tbody>
++      </table>
++      <p class="ad-empty" id="adEmpty" hidden>No rows yet.</p>
++    </div>
++    <p class="ad-note">Showing up to 200 most recent rows · dates in server time (UTC)</p>
++  </section>
++</main>
++
++<div class="ad-toast" id="adToast" role="status" aria-live="polite"></div>
++<script src="/js/admin.js" defer></script>
++</body>
++</html>
+diff --git a/public/css/admin.css b/public/css/admin.css
+new file mode 100644
+index 0000000..c751e44
+--- /dev/null
++++ b/public/css/admin.css
+@@ -0,0 +1,48 @@
++/* Hi World Club — admin dashboard */
++:root{
++  --bg:#f3f1ec; --ink:#101735; --ink-2:#2a3150; --muted:#6b6d78;
++  --orange:#ee6a24; --serif:'Source Serif 4',Georgia,serif;
++  --sans:'Source Sans 3',system-ui,-apple-system,sans-serif;
++}
++*{box-sizing:border-box;margin:0;padding:0}
++body{background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100vh}
++.ad-top{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:16px;padding:12px clamp(16px,4vw,32px);background:var(--ink);color:#fff}
++.ad-brand{color:#fff;text-decoration:none;font:600 14px var(--serif);letter-spacing:.04em;white-space:nowrap}
++.ad-brand:hover{color:#f5a15f}
++.ad-title{font:600 13px var(--sans);letter-spacing:.14em;text-transform:uppercase;opacity:.75}
++.ad-status{margin-left:auto;display:inline-flex;align-items:center;gap:8px;font:600 12px var(--sans);letter-spacing:.1em;text-transform:uppercase;background:rgba(255,255,255,.1);padding:7px 13px;border-radius:999px}
++.ad-status .dot{width:8px;height:8px;border-radius:50%;background:#e74c3c}
++.ad-status.open .dot{background:#2ecc71}
++.ad-main{max-width:1080px;margin:0 auto;padding:clamp(20px,4vw,36px) clamp(16px,4vw,32px) 60px}
++.ad-gate{max-width:520px;margin:8vh auto 0;background:#fff;border:1px solid rgba(16,23,53,.1);border-radius:18px;padding:clamp(24px,4vw,36px);box-shadow:0 24px 50px -30px rgba(16,23,53,.4);text-align:center}
++.ad-gate h1{font:700 clamp(24px,4vw,32px) var(--serif)}
++.ad-gate p{color:var(--muted);margin-top:8px;font-size:15px}
++.ad-gate code{background:#f0eee8;padding:2px 7px;border-radius:6px;font-size:13.5px}
++.ad-tokenrow{display:flex;gap:10px;margin-top:18px}
++.ad-tokenrow input{flex:1;font:400 16px var(--sans);padding:12px 14px;border-radius:10px;border:1px solid rgba(16,23,53,.2);min-width:0}
++.ad-tokenrow input:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px rgba(16,23,53,.12)}
++.btn-ink{font:600 14px var(--sans);padding:12px 22px;border-radius:999px;border:0;background:var(--ink);color:#fff;cursor:pointer;white-space:nowrap}
++.btn-ink:hover{background:#1d2753}
++.ad-err{color:#c0392b;font-weight:600;margin-top:12px}
++.ad-bar{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start;justify-content:space-between;margin-bottom:18px}
++.ad-stats{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:12px;flex:1;min-width:min(100%,560px)}
++.ad-stat{background:#fff;border:1px solid rgba(16,23,53,.1);border-radius:14px;padding:14px 16px}
++.ad-stat b{display:block;font:700 26px/1 var(--serif)}
++.ad-stat b.stat-hl{color:var(--orange)}
++.ad-stat span{font:600 11px var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
++.ad-actions{display:flex;gap:8px}
++.ad-actions button{font:600 13.5px var(--sans);padding:10px 16px;border-radius:999px;border:1px solid rgba(16,23,53,.2);background:#fff;cursor:pointer}
++.ad-actions button:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
++.ad-tabs{display:flex;gap:6px;flex-wrap:wrap;background:#ebe8e1;border-radius:999px;padding:5px;margin-bottom:14px}
++.ad-tabs button{flex:1;min-width:max-content;border:0;background:none;padding:10px 16px;border-radius:999px;font:600 14px var(--sans);cursor:pointer;color:var(--ink-2)}
++.ad-tabs button.active{background:var(--ink);color:#fff}
++.ad-tablewrap{background:#fff;border:1px solid rgba(16,23,53,.1);border-radius:14px;overflow:auto;max-height:60vh}
++.ad-table{width:100%;border-collapse:collapse;font-size:14px;min-width:640px}
++.ad-table th{position:sticky;top:0;background:var(--ink);color:#fff;text-align:left;font:600 11.5px var(--sans);letter-spacing:.08em;text-transform:uppercase;padding:11px 14px;white-space:nowrap}
++.ad-table td{padding:10px 14px;border-top:1px solid rgba(16,23,53,.08);vertical-align:top;max-width:320px;overflow-wrap:anywhere}
++.ad-table tbody tr:hover{background:#faf8f3}
++.ad-empty{padding:26px;text-align:center;color:var(--muted)}
++.ad-note{margin-top:10px;color:var(--muted);font-size:13px}
++.ad-toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);opacity:0;pointer-events:none;background:var(--ink);color:#fff;font:500 14px var(--sans);padding:12px 18px;border-radius:12px;transition:.3s;max-width:min(92vw,480px);text-align:center}
++.ad-toast.show{opacity:1;transform:translate(-50%,0)}
++@media (max-width:640px){.ad-stats{grid-template-columns:1fr 1fr}.ad-title{display:none}}
+diff --git a/public/css/styles.css b/public/css/styles.css
+new file mode 100644
+index 0000000..7c925ac
+--- /dev/null
++++ b/public/css/styles.css
+@@ -0,0 +1,494 @@
++/* ==========================================================================
++   Hi World Club — Explore Well  (refined stylesheet v2)
++   Base styles from the original poster + new photo/gallery/API sections.
++   ========================================================================== */
++:root{
++  --bg:#f3f1ec; --bg2:#eeebe5; --ink:#101735; --ink-2:#2a3150; --muted:#6b6d78;
++  --line:#8e8b85; --orange:#ee6a24; --navy:#1c2340; --amber:#9a4e12;
++  --serif:'Source Serif 4', Georgia, 'Times New Roman', serif;
++  --sans:'Source Sans 3', system-ui, -apple-system, Segoe UI, sans-serif;
++  --s:1;
++  --card:#fbfaf7; --shadow:0 18px 44px -22px rgba(16,23,53,.35);
++}
++*{box-sizing:border-box;margin:0;padding:0}
++[hidden]{display:none!important}
++html{scroll-behavior:smooth}
++body{background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow-x:hidden}
++body.lock{overflow:hidden}
++button{font:inherit;color:inherit}
++a{color:inherit}
++img{max-width:100%;display:block}
++:focus-visible{outline:2px solid var(--orange);outline-offset:3px;border-radius:4px}
++
++/* ============ NAV ============ */
++.nav{position:fixed;inset:0 0 auto 0;z-index:60;display:flex;align-items:center;justify-content:space-between;padding:14px clamp(16px,4vw,40px);transition:background .3s,box-shadow .3s}
++.nav.scrolled{background:rgba(243,241,236,.88);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 1px 0 rgba(16,23,53,.08)}
++.brand{display:flex;align-items:center;gap:10px;text-decoration:none;font-family:var(--serif);font-weight:600;letter-spacing:.05em;font-size:16px;white-space:nowrap}
++.brand-mark{position:relative;width:12px;height:22px;border-radius:2px 2px 4px 4px;margin-top:5px;background:linear-gradient(90deg,#4a1f03,#c47a2b 40%,#7a3a0a)}
++.brand-mark::before{content:"";position:absolute;left:0;right:0;top:-6px;height:6px;background:#111;border-radius:2px 2px 0 0}
++.nav-links{display:flex;align-items:center;gap:26px}
++.nav-links a{font-size:13px;letter-spacing:.12em;text-transform:uppercase;text-decoration:none;opacity:.72;transition:opacity .2s}
++.nav-links a:hover{opacity:1}
++.burger{display:none;width:40px;height:40px;border:0;background:none;cursor:pointer;flex-direction:column;justify-content:center;align-items:center;gap:5px}
++.burger span{display:block;width:22px;height:2px;background:var(--ink);transition:transform .3s,opacity .3s}
++.nav.menu-open .burger span:nth-child(1){transform:translateY(7px) rotate(45deg)}
++.nav.menu-open .burger span:nth-child(2){opacity:0}
++.nav.menu-open .burger span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
++
++/* ============ BUTTONS ============ */
++.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font:600 14px/1 var(--sans);letter-spacing:.05em;padding:12px 20px;border-radius:999px;border:1px solid var(--ink);background:transparent;color:var(--ink);cursor:pointer;text-decoration:none;transition:transform .2s,background .2s,color .2s,box-shadow .2s}
++.btn:hover{transform:translateY(-1px);box-shadow:0 6px 16px -8px rgba(16,23,53,.5)}
++.btn:active{transform:translateY(0)}
++.btn-ink{background:var(--ink);color:#fff}
++.btn-ink:hover{background:#1d2753}
++.btn-sm{padding:9px 16px;font-size:13px}
++.btn:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
++.btn-busy{opacity:.6;pointer-events:none}
++
++/* ============ POSTER (PAGE 1) ============ */
++.poster{position:relative;isolation:isolate;overflow:clip;min-height:100vh;padding:104px 20px 96px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
++.fit-wrap{width:100%;display:flex;justify-content:center;overflow:visible;transition:transform .3s ease-out;will-change:transform}
++.poster.parallax .fit-wrap{transform:translate3d(calc(var(--px,0)*var(--depth,1)*16px),calc(var(--py,0)*var(--depth,1)*12px),0)}
++.fit{flex:none;transform-origin:top center}
++
++/* ambient hero background */
++.hero-bg{position:absolute;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
++.hero-bg::after{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(16,23,53,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(16,23,53,.055) 1px,transparent 1px);background-size:46px 46px;-webkit-mask-image:radial-gradient(72% 62% at 50% 28%,#000 25%,transparent 78%);mask-image:radial-gradient(72% 62% at 50% 28%,#000 25%,transparent 78%)}
++.hero-bg i{position:absolute;border-radius:50%;filter:blur(80px);opacity:.6}
++.hero-bg .b1{width:560px;height:560px;left:-160px;top:-140px;background:radial-gradient(circle,#ffd9a8,transparent 65%);animation:drift 17s ease-in-out infinite alternate}
++.hero-bg .b2{width:480px;height:480px;right:-140px;top:6%;background:radial-gradient(circle,#ffc4a3,transparent 65%);animation:drift 21s ease-in-out infinite alternate-reverse}
++.hero-bg .b3{width:640px;height:640px;left:50%;bottom:-320px;transform:translateX(-50%);background:radial-gradient(circle,#ccd6ff,transparent 65%);opacity:.5;animation:drift 24s ease-in-out infinite alternate}
++@keyframes drift{to{transform:translate(46px,34px) scale(1.08)}}
++.hero-bg .b3{animation-name:drift-c}
++@keyframes drift-c{from{transform:translateX(-50%)}to{transform:translateX(calc(-50% + 46px)) translateY(30px) scale(1.06)}}
++
++/* hero eyebrow / sub / cta */
++.hero-eyebrow{display:inline-flex;align-items:center;gap:9px;font:600 12px var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--ink-2);background:rgba(255,255,255,.66);border:1px solid rgba(16,23,53,.12);padding:9px 18px;border-radius:999px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);margin-bottom:30px;box-shadow:0 10px 26px -16px rgba(16,23,53,.5)}
++.pulse{width:8px;height:8px;border-radius:50%;background:var(--orange);box-shadow:0 0 0 0 rgba(238,106,36,.5);animation:pulse 2.2s infinite}
++@keyframes pulse{70%{box-shadow:0 0 0 11px rgba(238,106,36,0)}100%{box-shadow:0 0 0 0 rgba(238,106,36,0)}}
++.hero-sub{margin-top:clamp(20px,3vw,28px);font:400 clamp(15px,2vw,18.5px)/1.6 var(--sans);color:var(--ink-2);max-width:58ch}
++.hero-cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:22px 0 clamp(36px,5vw,56px)}
++.hero-cta .btn-ink{box-shadow:0 16px 32px -12px rgba(16,23,53,.55)}
++.btn-lg{padding:15px 30px;font-size:15px}
++
++/* HI composition */
++.hi-art{width:434px;height:330px;display:flex;align-items:flex-start}
++.vgrid{display:grid;grid-template-columns:repeat(2,32px);column-gap:6px;row-gap:8px;margin-right:6px}
++.xbar{display:flex;flex-direction:column;gap:9px;align-self:center;margin-top:-18px;margin-right:6px}
++.xrow{display:flex;align-items:center;gap:6px}
++.rcol{display:flex;flex-direction:column;gap:8px}
++.vial{display:block;position:relative;width:32px;height:var(--h);margin-top:13px;border-radius:5px 5px 7px 7px;cursor:pointer;
++  background:linear-gradient(90deg,#4a1f03,#9a4e12 18%,#d98d35 34%,#f0b563 40%,#b86a1f 52%,#7a3a0a 80%,#3e1a02);
++  box-shadow:6px 8px 8px -3px rgba(90,45,5,.3),inset 0 -6px 8px rgba(0,0,0,.25);transition:transform .25s}
++.vial::before{content:"";position:absolute;left:1px;right:1px;top:-13px;height:14px;border-radius:3px 3px 1px 1px;
++  background:repeating-linear-gradient(90deg,#161616 0 2px,#2e2e2e 2px 3px);box-shadow:inset 0 -2px 0 rgba(255,255,255,.08)}
++.vial::after{content:"";position:absolute;left:6px;top:6px;bottom:8px;width:4px;border-radius:3px;background:linear-gradient(rgba(255,240,210,.75),rgba(255,230,190,.12))}
++.vial:hover{transform:translateY(-3px)}
++.vial.lie{width:var(--l);height:30px;margin:0 13px 0 0;border-radius:6px 4px 4px 6px;
++  background:linear-gradient(180deg,#4a1f03,#9a4e12 18%,#d98d35 34%,#f0b563 40%,#b86a1f 52%,#7a3a0a 80%,#3e1a02)}
++.vial.lie::before{left:auto;right:-13px;top:1px;bottom:1px;height:auto;width:14px;border-radius:1px 3px 3px 1px;background:repeating-linear-gradient(180deg,#161616 0 2px,#2e2e2e 2px 3px)}
++.vial.lie::after{left:6px;right:8px;top:5px;bottom:auto;width:auto;height:4px;background:linear-gradient(90deg,rgba(255,240,210,.75),rgba(255,230,190,.12))}
++.vial.lie.cap-left{margin:0 0 0 13px;border-radius:4px 6px 6px 4px}
++.vial.lie.cap-left::before{right:auto;left:-13px;border-radius:3px 1px 1px 3px}
++.vial.tip{animation:tip .6s ease}
++@keyframes tip{0%{transform:rotate(0)}30%{transform:rotate(-9deg)}60%{transform:rotate(6deg)}100%{transform:rotate(0)}}
++
++.lanyard{width:70px;display:flex;flex-direction:column;align-items:center;transform-origin:50% 0}
++.lanyard.l1{margin-right:60px}
++.lanyard.l2{margin-right:8px;margin-top:4px}
++.lanyard:hover{animation:swing 1.3s ease}
++@keyframes swing{0%{transform:rotate(0)}20%{transform:rotate(4deg)}45%{transform:rotate(-3deg)}70%{transform:rotate(1.5deg)}100%{transform:rotate(0)}}
++.strap{width:70px;height:200px;display:block;overflow:visible;filter:drop-shadow(4px 6px 4px rgba(120,50,10,.25))}
++.s-base{fill:none;stroke:var(--orange);stroke-width:12}
++.s-sheen{fill:none;stroke:#ff9a5c;stroke-width:5;opacity:.35}
++.strap text{fill:#fff;font:600 6.5px var(--sans);letter-spacing:.3px}
++.clip{width:12px;height:20px;margin-top:-6px;border-radius:3px;background:linear-gradient(90deg,#8d9197,#e8eaed 45%,#9ca0a6);box-shadow:0 2px 2px rgba(0,0,0,.2);position:relative;z-index:2}
++.clip::after{content:"";position:absolute;left:50%;bottom:-6px;width:8px;height:8px;border:2px solid #b8bcc1;border-radius:50%;transform:translateX(-50%)}
++.badge{width:62px;height:96px;margin-top:2px;border:1px solid #d9dadd;border-radius:5px;background:linear-gradient(160deg,#fff,#f1f2f4);box-shadow:4px 7px 9px -3px rgba(0,0,0,.25);display:flex;flex-direction:column;align-items:center;padding:8px 5px 5px;cursor:pointer;position:relative;overflow:hidden;transition:transform .2s;font-family:var(--sans)}
++.badge:hover{transform:scale(1.05)}
++.b-brand{font:700 7px var(--sans);color:var(--orange);letter-spacing:.02em}
++.b-small{font:600 6px var(--sans);color:#333;margin-top:1px}
++.b-name{font:600 5.5px var(--sans);color:#222;margin-top:3px}
++.b-role{font:400 4.5px var(--sans);color:#777}
++.barcode{margin-top:auto;width:46px;height:9px;background:repeating-linear-gradient(90deg,#222 0 1px,transparent 1px 2px,#222 2px 4px,transparent 4px 5px,#222 5px 6px,transparent 6px 8px)}
++.avatar{width:26px;height:28px;margin-top:4px;background:#e9eef6;border:1px solid #d5dbe5;display:block}
++.badge .ripple{position:absolute;left:50%;top:40%;width:10px;height:10px;border-radius:50%;border:2px solid var(--orange);transform:translate(-50%,-50%) scale(0);opacity:0;pointer-events:none}
++.badge.tapped .ripple{animation:ripple .7s ease-out}
++@keyframes ripple{0%{transform:translate(-50%,-50%) scale(0);opacity:1}100%{transform:translate(-50%,-50%) scale(9);opacity:0}}
++
++/* taglines */
++.taglines{margin:clamp(36px,6vw,64px) 0 clamp(36px,6vw,58px);font-family:var(--serif);font-weight:600;font-size:clamp(19px,3.7vw,40px);line-height:1;letter-spacing:.01em;text-transform:uppercase;color:var(--ink)}
++.taglines span,.taglines a{display:block}
++.taglines > * + *{margin-top:.98em}
++.taglines a{text-decoration:none;display:inline-block;background:linear-gradient(currentColor,currentColor) 0 100%/0 2px no-repeat;padding-bottom:4px;transition:background-size .35s}
++.taglines a:hover{background-size:100% 2px}
++.taglines a.accent{background:linear-gradient(94deg,#ee6a24 5%,#b34700 95%);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;text-decoration:underline;text-decoration-color:rgba(238,106,36,.4);text-decoration-thickness:2px;text-underline-offset:7px;padding-bottom:8px}
++.taglines a.accent:hover{background-size:auto;text-decoration-color:var(--orange)}
++
++/* WORLD composition */
++.world-art{position:relative;width:840px;height:192px}
++.letter{position:absolute;top:0;height:192px;cursor:pointer;transition:transform .35s cubic-bezier(.3,1.6,.5,1);outline:none}
++.letter:hover,.letter:focus-visible{transform:translateY(-8px)}
++.letter.jump{animation:jump .65s ease}
++@keyframes jump{0%{transform:translateY(0)}35%{transform:translateY(-22px) rotate(-2deg)}65%{transform:translateY(3px) rotate(1deg)}100%{transform:translateY(0)}}
++.letter > *{position:absolute}
++.book{border-radius:3px;background:linear-gradient(90deg,rgba(0,0,0,.22),rgba(255,255,255,.15) 22%,rgba(255,255,255,0) 55%,rgba(0,0,0,.2)),var(--c);box-shadow:8px 10px 12px -4px rgba(0,0,0,.28)}
++.book::after{content:"";position:absolute;right:-5px;top:3px;bottom:3px;width:5px;border-radius:0 2px 2px 0;background:repeating-linear-gradient(90deg,#f6f1e6 0 1px,#e2dac8 1px 2px)}
++.book.flat{background:linear-gradient(180deg,rgba(255,255,255,.18),rgba(0,0,0,0) 50%,rgba(0,0,0,.2)),linear-gradient(90deg,var(--c) 0 64%,#fdfdfb 64% 72%,var(--c) 72%)}
++.book.flat::after{right:3px;left:3px;top:-4px;bottom:auto;width:auto;height:4px;background:repeating-linear-gradient(180deg,#f6f1e6 0 1px,#e2dac8 1px 2px)}
++.book.note{background:linear-gradient(90deg,#161616 0 5px,#f4efe4 5px calc(100% - 4px),#161616 calc(100% - 4px))}
++.book.note::after{display:none}
++.pen{border-radius:4px 4px 2px 2px;background:linear-gradient(90deg,#000,#3c3c3c 40%,#0b0b0b);box-shadow:5px 7px 8px -3px rgba(0,0,0,.35)}
++.pen::before{content:"";position:absolute;right:-3px;top:8px;width:3px;height:40px;background:linear-gradient(90deg,#bbb,#eee);border-radius:2px}
++.pen::after{content:"";position:absolute;left:50%;bottom:-9px;border:4px solid transparent;border-top:9px solid #111;transform:translateX(-50%)}
++.hl{border-radius:5px;background:linear-gradient(90deg,#0c0c0c,#383838 40%,#0c0c0c);box-shadow:6px 8px 8px -3px rgba(0,0,0,.35)}
++.hl::before{content:"";position:absolute;left:3px;right:3px;top:30px;height:22px;background:#f4d31f;border-radius:1px}
++.hl.lie{background:linear-gradient(180deg,#0c0c0c,#383838 40%,#0c0c0c)}
++.hl.lie::before{top:3px;bottom:3px;left:74px;right:auto;width:22px;height:auto}
++.rmini{border-radius:14px 14px 12px 12px;background:radial-gradient(circle at 35% 25%,#3c3c3c,#111 60%);box-shadow:6px 8px 10px -3px rgba(0,0,0,.35)}
++.rmini::before{content:"";position:absolute;top:22%;left:50%;width:60%;height:24%;transform:translateX(-50%);border-radius:6px;background:#222;border:1px solid #444}
++.rmini::after{content:"";position:absolute;top:52%;left:50%;width:30%;height:6%;transform:translateX(-50%);border-radius:3px;background:#2a2a2a}
++.block{border:22px solid #f1c232;border-radius:2px;box-shadow:8px 10px 12px -4px rgba(0,0,0,.25),inset 3px 3px 5px rgba(0,0,0,.2)}
++.block::after{content:"";position:absolute;inset:-22px;border-radius:2px;background:linear-gradient(135deg,rgba(255,255,255,.25),transparent 40%,rgba(0,0,0,.1));pointer-events:none}
++.tube{border-radius:2px 9px 9px 2px;border:1px solid rgba(140,150,160,.55);background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(210,218,226,.5) 45%,rgba(255,255,255,.85));box-shadow:4px 6px 8px -3px rgba(0,0,0,.2)}
++.tube::before{content:"";position:absolute;left:-2px;top:-2px;bottom:-2px;width:14px;background:linear-gradient(180deg,#e04040,#9c1a22);border-radius:3px}
++.tube::after{content:"";position:absolute;right:2px;top:2px;bottom:2px;width:34%;border-radius:0 7px 7px 0;background:linear-gradient(180deg,#e9ac4f,#b86b1a);opacity:.85;transition:width .4s}
++.tube.v{border-radius:2px 2px 9px 9px;background:linear-gradient(90deg,rgba(255,255,255,.95),rgba(210,218,226,.5) 45%,rgba(255,255,255,.85))}
++.tube.v::before{left:-2px;right:-2px;top:-2px;bottom:auto;width:auto;height:14px;background:linear-gradient(90deg,#e04040,#9c1a22)}
++.tube.v::after{left:2px;right:2px;bottom:2px;top:auto;width:auto;height:32%;border-radius:0 0 7px 7px;transition:height .4s}
++.letter.slosh .tube::after{width:60%}
++.letter.slosh .tube.v::after{width:auto;height:62%}
++
++/* poster footer */
++.poster-foot{margin-top:clamp(40px,7vw,78px);font-family:var(--sans);font-size:clamp(11.5px,1.75vw,19.5px);line-height:1.3;color:#1c1f2e}
++.poster-foot p{text-transform:uppercase}
++.poster-foot .join-line{text-transform:none;margin-top:.55em}
++.inline-link{background:none;border:0;padding:0;font:inherit;color:inherit;text-transform:inherit;cursor:pointer;background-image:linear-gradient(currentColor,currentColor);background-size:0 1px;background-position:0 100%;background-repeat:no-repeat;transition:background-size .3s}
++.inline-link:hover,.inline-link:focus-visible{background-size:100% 1px}
++.copy-chip{display:inline-flex;align-items:center;gap:6px}
++.copy-chip svg{width:.85em;height:.85em;opacity:.55;transition:opacity .2s}
++.copy-chip:hover svg{opacity:1}
++.scroll-cue{margin-top:34px;width:26px;height:40px;border:1.5px solid rgba(16,23,53,.4);border-radius:14px;position:relative;display:block}
++.scroll-cue::after{content:"";position:absolute;left:50%;top:8px;width:3px;height:7px;border-radius:2px;background:var(--ink);transform:translateX(-50%);animation:cue 1.8s infinite}
++@keyframes cue{0%{opacity:0;transform:translate(-50%,0)}40%{opacity:1}100%{opacity:0;transform:translate(-50%,12px)}}
++
++/* live stats band */
++.stats-band{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin-top:34px}
++.stat-chip{display:inline-flex;align-items:center;gap:8px;background:#fff;border:1px solid rgba(16,23,53,.12);border-radius:999px;padding:8px 14px;font:600 13px var(--sans);box-shadow:0 4px 14px -8px rgba(16,23,53,.4)}
++.stat-chip b{font:700 15px var(--serif);color:var(--orange)}
++.stat-chip .dot{width:7px;height:7px;border-radius:50%;background:#2ecc71}
++.stat-chip.offline .dot{background:#c0392b}
++.stat-chip.status{flex-basis:100%;justify-content:center;background:none;border:0;box-shadow:none;padding:0;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
++.stat-chip.card{flex-direction:column;align-items:center;gap:4px;min-width:168px;padding:18px 26px;border-radius:20px;background:rgba(255,255,255,.78);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 20px 38px -22px rgba(16,23,53,.55)}
++.stat-chip.card b{font:700 32px/1 var(--serif);color:var(--ink)}
++.stat-chip.card b.stat-hl{color:var(--orange)}
++.stat-chip.card span{font:600 11.5px var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
++.stat-chip.card em{font-style:normal;color:var(--ink-2)}
++
++/* ============ MOMENTS / GALLERY ============ */
++.moments{background:var(--ink);color:#f2f0ea;padding:clamp(60px,9vw,96px) clamp(16px,4vw,40px);scroll-margin-top:40px;border-radius:38px 38px 0 0;margin-top:-38px;position:relative;z-index:1;box-shadow:0 -24px 50px -30px rgba(16,23,53,.5)}
++.moments-inner{max-width:1080px;margin:0 auto}
++.moments .m-eyebrow{color:#f5a15f}
++.moments h2{font:600 clamp(26px,4.4vw,42px)/1.05 var(--serif);text-transform:uppercase;margin:8px 0 10px}
++.moments .sub{font:400 16px/1.6 var(--sans);color:#c9cbe0;max-width:62ch}
++.gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:28px}
++.g-item{position:relative;border:0;padding:0;background:none;cursor:zoom-in;border-radius:14px;overflow:hidden;aspect-ratio:4/3;box-shadow:0 20px 40px -20px rgba(0,0,0,.6)}
++.g-item img{width:100%;height:100%;object-fit:cover;transition:transform .6s cubic-bezier(.2,1,.3,1)}
++.g-item:hover img,.g-item:focus-visible img{transform:scale(1.06)}
++.g-item figcaption{position:absolute;left:0;right:0;bottom:0;padding:26px 14px 12px;text-align:left;font:600 13px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:#fff;background:linear-gradient(transparent,rgba(8,10,24,.78))}
++.g-item:first-child{grid-column:span 2;aspect-ratio:16/8}
++
++/* ============ PILLARS (PAGE 2) ============ */
++.pillars{background:var(--bg2);padding:clamp(60px,9vw,100px) clamp(10px,3vw,24px) clamp(70px,10vw,110px);scroll-margin-top:40px;border-radius:38px 38px 0 0;margin-top:-38px;position:relative;z-index:2}
++.pillar-grid{position:relative;max-width:900px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr}
++.pline{position:absolute;background:var(--line);transition:transform 1.2s cubic-bezier(.6,0,.2,1)}
++.pline.v{left:50%;top:0;bottom:0;width:1px;transform:scaleY(0);transform-origin:top}
++.pline.h{left:0;right:0;top:var(--hy,50%);height:1px;transform:scaleX(0);transform-origin:left}
++.pillar-grid.in .pline{transform:none}
++.q{position:relative;display:flex;flex-direction:column;cursor:pointer;outline:none;transition:opacity .4s;background:none;border:0;text-align:inherit;font:inherit;color:inherit;width:100%}
++.q1{padding:24px clamp(14px,4vw,36px) 30px 0;align-items:flex-end}
++.q2{padding:24px 0 30px clamp(14px,4vw,36px);align-items:flex-start}
++.q3{padding:34px clamp(14px,4vw,36px) 20px 0;align-items:flex-end}
++.q4{padding:34px 0 20px clamp(14px,4vw,36px);align-items:flex-start}
++.q-obj{width:100%;height:calc(var(--oh) * var(--s));display:flex;justify-content:center;align-items:center;position:relative}
++.q-obj > *{flex:none;transform:scale(var(--s))}
++.q1 .q-obj{--oh:410px;padding-right:4%}
++.q2 .q-obj{--oh:410px;padding-left:4%}
++.q3 .q-obj{--oh:370px;align-items:flex-start;margin-top:30px;padding-right:4%}
++.q3 .q-obj > *{transform-origin:top center}
++.q4 .q-obj{--oh:440px;align-items:flex-start;justify-content:flex-end;margin-top:calc(-96px * var(--s));margin-right:-30px;width:calc(100% + 30px)}
++.q4 .q-obj > *{transform-origin:top right}
++.q-label{font-family:var(--serif);font-weight:400;font-size:clamp(17px,3.35vw,33px);line-height:1.08;letter-spacing:.01em;text-transform:uppercase;transition:color .3s;white-space:pre-line}
++.q1 .q-label,.q3 .q-label{text-align:right}
++.q1 .q-label,.q2 .q-label{margin-top:22px}
++.q-hint{position:absolute;font:600 11px var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);opacity:0;transform:translateY(6px);transition:.3s;pointer-events:none}
++.q1 .q-hint{left:0;top:24px}.q2 .q-hint{right:0;top:24px}.q3 .q-hint{left:0;bottom:22px}.q4 .q-hint{right:0;bottom:22px}
++.q:hover .q-hint,.q:focus-visible .q-hint{opacity:1;transform:none}
++.q:focus-visible .q-label{color:var(--orange)}
++.presenting .q{opacity:.22}
++.presenting .q.spot{opacity:1}
++
++/* cork bottle */
++.cork-bottle{position:relative;width:96px;height:262px;filter:drop-shadow(16px 20px 14px rgba(60,35,10,.26))}
++.cork{position:absolute;left:50%;top:0;width:50px;height:36px;transform:translateX(-50%);border-radius:5px 5px 2px 2px;z-index:2;transition:transform .5s cubic-bezier(.3,1.6,.5,1);
++  background:radial-gradient(circle at 20% 30%,rgba(90,55,20,.5) 1px,transparent 2px) 0 0/7px 6px,radial-gradient(circle at 70% 60%,rgba(90,55,20,.4) 1px,transparent 2px) 0 0/9px 8px,linear-gradient(90deg,#a87942,#dcb582 40%,#c99c64 70%,#9b6e3b)}
++.neck{position:absolute;left:50%;top:30px;width:62px;height:24px;transform:translateX(-50%);border-radius:7px 7px 0 0;background:linear-gradient(90deg,#3d1a05,#8a4410 25%,#c47628 42%,#7a3a0c 75%,#3a1804);box-shadow:inset 0 3px 0 rgba(255,200,140,.25)}
++.glass{position:absolute;left:0;right:0;top:50px;bottom:0;border-radius:30px 30px 12px 12px/20px 20px 12px 12px;
++  background:linear-gradient(90deg,#3d1a05,#7a3a0c 15%,#a8571a 30%,#cf7f2e 40%,#8f4613 60%,#5c2807 85%,#361503);box-shadow:inset 0 10px 14px rgba(255,190,120,.2),inset 0 -14px 18px rgba(0,0,0,.35)}
++.glass::after{content:"";position:absolute;left:14px;top:18px;bottom:22px;width:7px;border-radius:5px;background:linear-gradient(rgba(255,230,190,.55),rgba(255,230,190,.05))}
++.b-label{position:absolute;left:3px;right:3px;top:48px;height:74px;border-radius:4px;background:linear-gradient(90deg,#c2a57a,#e6d1ac 30%,#dcc39b 70%,#b3946a);display:grid;place-items:center;font:italic 500 13px var(--serif);color:rgba(80,55,25,0);transition:color .4s}
++.q1:hover .cork{transform:translate(-50%,-22px) rotate(-10deg)}
++.q1:hover .b-label{color:rgba(80,55,25,.8)}
++
++/* remote */
++.remote{position:relative;width:112px;height:372px;border-radius:56px 56px 48px 48px/64px 64px 48px 48px;
++  background:radial-gradient(120% 60% at 30% 18%,#3b3b3d,#1b1b1c 45%,#0e0e0f);box-shadow:18px 24px 26px rgba(0,0,0,.24),inset 2px 2px 3px rgba(255,255,255,.08),inset -3px -4px 8px rgba(0,0,0,.6);transition:transform .4s}
++.q2:hover .remote{transform:rotate(-3deg)}
++.r-laser{position:absolute;top:22px;left:50%;transform:translateX(-50%);width:24px;height:30px;border:0;border-radius:10px;background:#18181a;cursor:pointer;box-shadow:inset 0 1px 1px rgba(255,255,255,.06)}
++.r-laser::before,.r-laser::after{content:"";position:absolute;left:7px;right:7px;height:2px;background:#555;border-radius:1px;transition:background .2s,box-shadow .2s}
++.r-laser::before{top:10px}.r-laser::after{top:16px}
++.r-laser.on::before,.r-laser.on::after{background:#ff3b3b;box-shadow:0 0 6px #ff3b3b}
++.r-pad{position:absolute;top:64px;left:50%;transform:translateX(-50%);width:80px;display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:3px;border-radius:12px;background:#070707}
++.r-btn{border:0;height:32px;border-radius:5px;background:linear-gradient(#2b2b2c,#1b1b1c);color:#d6d6d6;cursor:pointer;display:grid;place-items:center;transition:background .15s,transform .1s}
++.r-btn:hover{background:linear-gradient(#353536,#232324);color:#fff}
++.r-btn:active,.r-btn.press{transform:translateY(1px);background:#111}
++.r-btn svg{width:13px;height:13px}
++.r-home{grid-column:span 2;height:24px;border-radius:9px 9px 4px 4px}
++.r-arrow{height:36px}
++.r-sm{height:22px}
++.r-pad .r-btn:nth-child(4){border-radius:4px 4px 4px 9px}
++.r-pad .r-btn:nth-child(5){border-radius:4px 4px 9px 4px}
++.r-slot{position:absolute;bottom:10px;left:50%;width:34px;height:14px;transform:translateX(-50%);border-radius:6px 6px 3px 3px;background:#080808;box-shadow:inset 0 2px 3px rgba(0,0,0,.8)}
++
++/* tomes */
++.tomes{display:flex;gap:4px;align-items:flex-end;filter:drop-shadow(26px 12px 16px rgba(0,0,0,.16))}
++.tome{position:relative;width:60px;height:322px;border:0;border-radius:4px;cursor:pointer;transition:transform .35s cubic-bezier(.3,1.5,.5,1);
++  background:repeating-linear-gradient(0deg,rgba(0,0,0,.03) 0 1px,transparent 1px 3px),repeating-linear-gradient(90deg,rgba(0,0,0,.025) 0 1px,transparent 1px 3px),linear-gradient(90deg,#b2ac9a,#d0cbba 15%,#cdc7b6 82%,#aaa38f)}
++.tome span{position:absolute;top:30px;left:50%;transform:translateX(-50%);writing-mode:vertical-rl;font:500 19px var(--serif);letter-spacing:.06em;color:#94784a;text-shadow:0 1px 0 rgba(255,255,255,.35);white-space:nowrap}
++.tome.t2{width:64px;height:328px}
++.tome.t2 span{font-size:17.5px;top:22px}
++.tome.t2::after{content:"";position:absolute;right:-9px;top:4px;bottom:4px;width:9px;border-radius:0 3px 3px 0;background:repeating-linear-gradient(90deg,#f3efe6 0 1px,#d9d2c3 1px 2px)}
++.tome:hover,.tome:focus-visible{transform:translateY(-16px)}
++
++/* visitor pass */
++.pass-wrap{position:relative;width:350px;height:440px;transform-origin:top right}
++.pass-strap{position:absolute;inset:0;width:100%;height:100%;overflow:visible;filter:drop-shadow(10px 12px 10px rgba(0,0,0,.18))}
++.ps-base{fill:none;stroke:var(--navy);stroke-width:20;stroke-linecap:round}
++.ps-weave{fill:none;stroke:rgba(255,255,255,.07);stroke-width:20;stroke-dasharray:1.5 2.5}
++.pass-swing{position:absolute;left:0;top:0;width:260px;height:440px;transform-origin:128px 250px;transition:transform .6s cubic-bezier(.3,1.6,.5,1)}
++.q4:hover .pass-swing{transform:rotate(3deg)}
++.pass-clip{position:absolute;left:116px;top:246px;width:24px;height:36px;border-radius:4px 4px 3px 3px;background:linear-gradient(90deg,#8d9197,#eceef0 45%,#9ca0a6);box-shadow:0 3px 3px rgba(0,0,0,.2);z-index:3}
++.pass-clip::before{content:"";position:absolute;left:50%;top:-10px;width:12px;height:12px;border:3px solid #a9adb3;border-radius:50%;transform:translateX(-50%)}
++.pass{position:absolute;left:10px;top:272px;width:232px;height:182px;border-radius:9px;border:1px solid rgba(170,180,190,.85);background:linear-gradient(160deg,rgba(255,255,255,.75),rgba(235,240,245,.55));box-shadow:10px 14px 18px -6px rgba(0,0,0,.22),inset 0 0 0 3px rgba(255,255,255,.4);z-index:2}
++.pass::before,.pass::after{content:"";position:absolute;top:12px;width:7px;height:7px;border-radius:50%;background:var(--bg2);border:1px solid #c5ccd3}
++.pass::before{left:44px}.pass::after{right:44px}
++.pass-card{position:absolute;left:12px;right:12px;top:40px;bottom:16px;background:#fbfbfa;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-family:var(--serif);color:var(--ink);padding:14px 6px}
++.pass-card::before,.pass-card::after{content:"";position:absolute;left:0;right:0;height:11px;background:var(--navy)}
++.pass-card::before{top:0}.pass-card::after{bottom:0}
++.pass-card strong{font-size:21px;font-weight:700;letter-spacing:.01em;line-height:1.05}
++.pass-card em{font-style:normal;font-size:13.5px;line-height:1.2;letter-spacing:.02em}
++.pass-issued{font:600 9px var(--sans)!important;letter-spacing:.12em!important;margin-top:4px;color:var(--orange)}
++
++/* site footer */
++.site-foot{background:var(--ink);color:#e9e8f0;padding:48px clamp(16px,4vw,40px);display:flex;flex-wrap:wrap;gap:24px;align-items:center;justify-content:space-between}
++.site-foot .brand{color:#fff}
++.site-foot .brand-mark::before{background:#000}
++.foot-mid{font:400 14px var(--sans);opacity:.7}
++.foot-admin{font-size:12px;opacity:.55;text-decoration:none;border-bottom:1px dotted currentColor}
++.foot-admin:hover{opacity:1}
++.site-foot .btn{border-color:#fff;color:#fff}
++.site-foot .btn-ink{background:#fff;color:var(--ink)}
++
++/* ============ MODALS ============ */
++.modal{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:16px;background:rgba(14,18,38,.5);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);opacity:0;transition:opacity .25s}
++.modal.open{opacity:1}
++.m-card{position:relative;width:min(780px,100%);max-height:calc(100vh - 32px);overflow:auto;background:#f8f6f1;border-radius:16px;box-shadow:0 30px 80px -20px rgba(0,0,0,.45);padding:clamp(22px,4vw,40px);transform:translateY(18px) scale(.98);transition:transform .3s cubic-bezier(.2,1,.3,1)}
++.modal.open .m-card{transform:none}
++.m-close{position:absolute;top:14px;right:14px;width:38px;height:38px;border-radius:50%;border:1px solid rgba(16,23,53,.15);background:#fff;cursor:pointer;display:grid;place-items:center;transition:transform .2s,background .2s;z-index:2}
++.m-close:hover{transform:rotate(90deg);background:#f0eee8}
++.m-close svg{width:14px;height:14px}
++.m-eyebrow{font:600 12px var(--sans);letter-spacing:.18em;text-transform:uppercase;color:var(--orange)}
++.m-title{font:600 clamp(26px,4vw,38px)/1.05 var(--serif);text-transform:uppercase;margin:8px 0 10px;padding-right:40px}
++.m-lead{font:400 17px/1.55 var(--sans);color:var(--ink-2);max-width:60ch}
++.m-sec{margin-top:26px}
++.m-h{font:600 13px var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:12px}
++.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
++.chip{font:600 12.5px var(--sans);letter-spacing:.04em;padding:7px 12px;border-radius:999px;background:#fff;border:1px solid rgba(16,23,53,.12)}
++.chip.hot{background:var(--orange);border-color:var(--orange);color:#fff}
++.tabs{display:flex;gap:6px;padding:5px;background:#ebe8e1;border-radius:999px;margin-top:22px;flex-wrap:wrap}
++.tab{flex:1;min-width:max-content;border:0;background:transparent;padding:10px 16px;border-radius:999px;font:600 14px var(--sans);cursor:pointer;color:var(--ink-2);transition:background .2s,color .2s}
++.tab.active{background:var(--ink);color:#fff}
++.panel{animation:fade .35s ease}
++@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
++.timeline{list-style:none;position:relative;padding-left:22px}
++.timeline::before{content:"";position:absolute;left:5px;top:6px;bottom:6px;width:1px;background:rgba(16,23,53,.2)}
++.timeline li{position:relative;padding:8px 0;font:400 15.5px/1.45 var(--sans)}
++.timeline li::before{content:"";position:absolute;left:-21px;top:14px;width:9px;height:9px;border-radius:50%;background:var(--bg);border:2px solid var(--orange)}
++.timeline b{font-weight:700;display:inline-block;min-width:62px;color:var(--ink)}
++.two-col{display:grid;grid-template-columns:1.3fr 1fr;gap:28px}
++.ticks{list-style:none;display:grid;gap:10px}
++.ticks li{position:relative;padding-left:24px;font:400 15.5px/1.45 var(--sans)}
++.ticks li::before{content:"";position:absolute;left:2px;top:6px;width:10px;height:6px;border-left:2px solid var(--orange);border-bottom:2px solid var(--orange);transform:rotate(-45deg)}
++.m-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px}
++.note{font:400 13.5px/1.5 var(--sans);color:var(--muted);margin-top:14px}
++
++/* modal photos */
++.m-photo{margin-top:18px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow);background:#e7e2d8}
++.m-photo img{width:100%;height:230px;object-fit:cover}
++.m-photo figcaption{font:500 12.5px var(--sans);color:var(--muted);padding:9px 14px;background:#fff;letter-spacing:.02em}
++
++/* reserve box */
++.reserve-box{margin-top:22px;background:#fff;border:1px solid rgba(16,23,53,.1);border-radius:14px;padding:18px}
++.seat-meter{display:flex;align-items:center;gap:10px;margin:10px 0 14px}
++.seat-meter .track{flex:1;margin:0}
++.seat-meter b{font:700 14px var(--sans);white-space:nowrap}
++
++/* deck */
++.deck{position:relative;margin-top:24px;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 12px 30px -14px rgba(16,23,53,.35);aspect-ratio:16/9;touch-action:pan-y}
++.slides{display:flex;height:100%;transition:transform .55s cubic-bezier(.6,0,.2,1)}
++.slide{flex:0 0 100%;height:100%;padding:6% 7%;display:flex;flex-direction:column;justify-content:center;gap:10px;position:relative}
++.slide .s-k{font:600 11px var(--sans);letter-spacing:.2em;text-transform:uppercase;color:var(--orange)}
++.slide h4{font:600 clamp(20px,3.6vw,34px)/1.1 var(--serif)}
++.slide p{font:400 clamp(13px,1.8vw,16px)/1.5 var(--sans);color:var(--ink-2);max-width:46ch}
++.slide.dark{background:var(--ink);color:#fff}
++.slide.dark p{color:#c9cbe0}
++.pyr{display:grid;grid-template-columns:repeat(3,56px);gap:6px;margin-top:8px}
++.pyr span{height:22px;border-radius:4px;background:#e7e4dc}
++.pyr span:first-child{grid-column:1/-1;background:var(--orange)}
++.bars{display:flex;align-items:flex-end;gap:10px;height:90px;margin-top:8px}
++.bars span{width:30px;background:#dcd8cf;border-radius:3px 3px 0 0}
++.bars span.hi{background:var(--orange)}
++.bignum{position:absolute;right:7%;bottom:4%;font:700 clamp(80px,16vw,160px)/1 var(--serif);color:rgba(16,23,53,.07)}
++.deck-bar{position:absolute;left:0;bottom:0;height:3px;background:var(--orange);transition:width .4s}
++.deck-ctrl{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;flex-wrap:wrap}
++.deck-dots{display:flex;gap:7px}
++.deck-dots button{width:9px;height:9px;border-radius:50%;border:0;background:#d6d2c9;cursor:pointer;transition:transform .2s,background .2s}
++.deck-dots button.active{background:var(--ink);transform:scale(1.25)}
++.deck-count{font:600 13px var(--sans);color:var(--muted);min-width:44px;text-align:center}
++.ctrl-group{display:flex;align-items:center;gap:8px}
++.icon-btn{width:40px;height:40px;border-radius:50%;border:1px solid rgba(16,23,53,.18);background:#fff;cursor:pointer;display:grid;place-items:center;transition:background .2s,transform .2s}
++.icon-btn:hover:not(:disabled){background:var(--ink);color:#fff}
++.icon-btn:disabled{opacity:.35;cursor:not-allowed}
++.icon-btn svg{width:15px;height:15px}
++.sessions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
++.session{background:#fff;border:1px solid rgba(16,23,53,.1);border-radius:10px;padding:14px}
++.session b{display:block;font:600 16px var(--serif);margin:4px 0}
++.session span{font:600 11px var(--sans);letter-spacing:.14em;color:var(--orange)}
++.session p{font:400 13.5px/1.4 var(--sans);color:var(--muted)}
++
++/* impact */
++.meter{background:#fff;border:1px solid rgba(16,23,53,.1);border-radius:14px;padding:20px}
++.meter-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
++.meter-num{font:700 44px/1 var(--serif)}
++.meter-num small{font:500 16px var(--sans);color:var(--muted);margin-left:6px}
++.track{height:10px;border-radius:99px;background:#ebe8e1;overflow:hidden;margin-top:14px}
++.track i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--orange),#f5a15f);border-radius:99px;transition:width .8s cubic-bezier(.3,1,.3,1)}
++.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
++.field{display:flex;flex-direction:column;gap:6px}
++.field.full{grid-column:1/-1}
++.field label,.field .lbl{font:600 12.5px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2)}
++.field input,.field select,.field textarea{font:400 16px var(--sans);padding:12px 14px;border-radius:10px;border:1px solid rgba(16,23,53,.18);background:#fff;color:var(--ink);transition:border-color .2s,box-shadow .2s;width:100%}
++.field textarea{resize:vertical;min-height:84px}
++.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px rgba(16,23,53,.1)}
++.field.err input{border-color:#c62828;box-shadow:0 0 0 3px rgba(198,40,40,.12)}
++.field .err-msg{display:none;font:500 12.5px var(--sans);color:#c62828}
++.field.err .err-msg{display:block}
++.stepper{display:flex;align-items:center;border:1px solid rgba(16,23,53,.18);border-radius:10px;background:#fff;overflow:hidden;width:max-content}
++.stepper button{width:44px;height:46px;border:0;background:transparent;font-size:20px;cursor:pointer}
++.stepper button:hover{background:#f0eee8}
++.stepper output{min-width:40px;text-align:center;font:600 16px var(--sans)}
++.pledges{list-style:none;display:grid;gap:8px;max-height:170px;overflow:auto}
++.pledges li{display:flex;justify-content:space-between;gap:10px;font:400 14.5px var(--sans);padding:10px 12px;border-radius:10px;background:#fff;border:1px solid rgba(16,23,53,.08);animation:fade .4s}
++.pledges li span:last-child{color:var(--muted);white-space:nowrap}
++.pledges li.empty{justify-content:center;color:var(--muted)}
++.shelf{display:grid;grid-template-columns:1fr 1fr;gap:14px}
++.shelf-book{display:flex;gap:14px;padding:16px;border-radius:12px;background:#fff;border:1px solid rgba(16,23,53,.1);transition:box-shadow .3s,border-color .3s}
++.shelf-book.hl-on{border-color:var(--orange);box-shadow:0 0 0 3px rgba(238,106,36,.15)}
++.mini-tome{flex:none;width:30px;height:120px;border-radius:3px;background:linear-gradient(90deg,#b2ac9a,#d0cbba 20%,#aaa38f);display:grid;place-items:center}
++.mini-tome span{writing-mode:vertical-rl;font:500 10px var(--serif);color:#8a6e40;letter-spacing:.05em;white-space:nowrap}
++.shelf-book h5{font:600 18px var(--serif);text-transform:uppercase}
++.shelf-book p{font:400 14px/1.5 var(--sans);color:var(--ink-2);margin-top:6px}
++.shelf-book ul{margin:8px 0 0 16px;font:400 13.5px/1.5 var(--sans);color:var(--muted)}
++
++/* cohort */
++.cohort-grid{display:grid;grid-template-columns:1fr 1fr;gap:26px;align-items:start}
++.pv{position:relative;border-radius:10px;border:1px solid rgba(170,180,190,.85);background:linear-gradient(160deg,rgba(255,255,255,.9),rgba(235,240,245,.6));padding:36px 12px 14px;box-shadow:0 14px 28px -14px rgba(0,0,0,.3)}
++.pv::before{content:"";position:absolute;left:50%;top:10px;width:46px;height:8px;border-radius:5px;transform:translateX(-50%);background:#e3e7eb;border:1px solid #c5ccd3}
++.pv-card{position:relative;background:#fbfbfa;text-align:center;padding:26px 10px;font-family:var(--serif)}
++.pv-card::before,.pv-card::after{content:"";position:absolute;left:0;right:0;height:12px;background:var(--navy)}
++.pv-card::before{top:0}.pv-card::after{bottom:0}
++.pv-card strong{display:block;font-size:24px}
++.pv-card em{display:block;font-style:normal;font-size:14px;margin-top:2px}
++.pv-name{display:block;font:700 18px var(--sans);margin-top:14px;letter-spacing:.02em;word-break:break-word}
++.pv-track{display:inline-block;font:600 10.5px var(--sans);letter-spacing:.16em;text-transform:uppercase;color:#fff;background:var(--orange);padding:4px 9px;border-radius:99px;margin-top:6px}
++.shake{animation:shake .4s}
++@keyframes shake{25%{transform:translateX(-6px)}50%{transform:translateX(5px)}75%{transform:translateX(-3px)}}
++.recent-passes{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
++
++/* join */
++.checks{display:flex;flex-wrap:wrap;gap:8px}
++.check{position:relative}
++.check input{position:absolute;opacity:0;pointer-events:none}
++.check span{display:inline-flex;align-items:center;gap:6px;padding:9px 14px;border-radius:999px;border:1px solid rgba(16,23,53,.18);background:#fff;font:600 13.5px var(--sans);cursor:pointer;transition:.2s}
++.check input:checked + span{background:var(--ink);color:#fff;border-color:var(--ink)}
++.check input:focus-visible + span{outline:2px solid var(--orange);outline-offset:2px}
++.wc-box{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#fff;border:1px dashed rgba(16,23,53,.3);border-radius:12px;padding:14px 16px;margin-top:18px}
++.wc-box code{font:600 18px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em}
++.done{text-align:center;padding:10px 0}
++.done-icon{width:64px;height:64px;margin:0 auto 14px;border-radius:50%;background:var(--ink);display:grid;place-items:center;animation:pop .5s cubic-bezier(.3,1.6,.5,1)}
++.done-icon svg{width:28px;height:28px;color:#fff}
++@keyframes pop{from{transform:scale(0)}to{transform:scale(1)}}
++
++/* lightbox */
++.lightbox{position:fixed;inset:0;z-index:150;background:rgba(8,10,24,.9);display:grid;place-items:center;padding:20px;opacity:0;transition:opacity .25s}
++.lightbox.open{opacity:1}
++.lightbox figure{max-width:min(920px,94vw);max-height:88vh;display:flex;flex-direction:column;gap:10px}
++.lightbox img{max-width:100%;max-height:76vh;object-fit:contain;border-radius:12px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
++.lightbox figcaption{color:#e9e8f0;font:500 14px var(--sans);text-align:center}
++.lightbox .m-close{position:fixed;top:18px;right:18px}
++
++/* toast, laser, blackout */
++.toast{position:fixed;left:50%;bottom:24px;z-index:200;max-width:min(92vw,520px);transform:translate(-50%,20px);opacity:0;pointer-events:none;background:var(--ink);color:#fff;font:500 14.5px/1.4 var(--sans);padding:13px 18px;border-radius:12px;box-shadow:0 14px 34px -10px rgba(0,0,0,.45);transition:.3s;text-align:center}
++.toast.show{opacity:1;transform:translate(-50%,0)}
++.laser{position:fixed;left:-7px;top:-7px;width:14px;height:14px;border-radius:50%;z-index:300;pointer-events:none;display:none;background:radial-gradient(circle,#fff 0 15%,#ff2a2a 40%,rgba(255,0,0,0) 72%);box-shadow:0 0 14px 6px rgba(255,30,30,.55)}
++body.laser-on .laser{display:block}
++body.laser-on,body.laser-on *{cursor:none!important}
++.blackout{position:fixed;inset:0;z-index:400;background:#000;color:#555;display:grid;place-items:center;font:500 14px var(--sans);letter-spacing:.1em;text-transform:uppercase;opacity:0;pointer-events:none;transition:opacity .35s}
++.blackout.on{opacity:1;pointer-events:auto;cursor:pointer}
++
++/* reveal */
++.reveal{opacity:0;transform:translateY(24px);transition:opacity .9s ease,transform .9s cubic-bezier(.2,1,.3,1)}
++.reveal.in{opacity:1;transform:none}
++.taglines.reveal > *{opacity:0;transform:translateY(14px);transition:opacity .7s ease,transform .7s ease}
++.taglines.reveal.in > *{opacity:1;transform:none}
++.taglines.reveal.in > *:nth-child(2){transition-delay:.12s}
++.taglines.reveal.in > *:nth-child(3){transition-delay:.24s}
++.taglines.reveal.in > *:nth-child(4){transition-delay:.36s}
++
++/* ============ RESPONSIVE ============ */
++@media (max-width:900px){ .gallery{grid-template-columns:1fr 1fr} .g-item:first-child{grid-column:span 2} }
++@media (max-width:860px){
++  :root{--s:.78}
++  .nav-links{position:absolute;top:100%;left:0;right:0;flex-direction:column;align-items:stretch;gap:0;background:rgba(243,241,236,.98);backdrop-filter:blur(10px);padding:8px 20px 20px;box-shadow:0 12px 24px -12px rgba(0,0,0,.2);transform:translateY(-8px);opacity:0;pointer-events:none;transition:.25s}
++  .nav.menu-open .nav-links{transform:none;opacity:1;pointer-events:auto}
++  .nav.menu-open{background:rgba(243,241,236,.98)}
++  .nav-links a{padding:14px 0;border-bottom:1px solid rgba(16,23,53,.08);font-size:14px}
++  .nav-links .btn{margin-top:14px}
++  .burger{display:flex}
++  .two-col,.cohort-grid{grid-template-columns:1fr}
++  .sessions{grid-template-columns:1fr}
++}
++@media (max-width:620px){
++  :root{--s:.56}
++  .form-grid,.shelf{grid-template-columns:1fr}
++  .gallery{grid-template-columns:1fr}
++  .g-item:first-child{grid-column:span 1;aspect-ratio:4/3}
++  .q4 .q-obj{margin-right:-10px;width:calc(100% + 10px)}
++  .m-photo img{height:170px}
++}
++@media (max-width:420px){ :root{--s:.46} }
++@media (prefers-reduced-motion:reduce){
++  *,*::before,*::after{animation:none!important;transition:none!important}
++  html{scroll-behavior:auto}
++  .reveal,.taglines.reveal > *{opacity:1;transform:none}
++}
+diff --git a/public/images/bookdrive.jpg b/public/images/bookdrive.jpg
+new file mode 100644
+index 0000000..17fe531
+Binary files /dev/null and b/public/images/bookdrive.jpg differ
+diff --git a/public/images/cohort.jpg b/public/images/cohort.jpg
+new file mode 100644
+index 0000000..0c0290b
+Binary files /dev/null and b/public/images/cohort.jpg differ
+diff --git a/public/images/gallery-campus.jpg b/public/images/gallery-campus.jpg
+new file mode 100644
+index 0000000..c94e68a
+Binary files /dev/null and b/public/images/gallery-campus.jpg differ
+diff --git a/public/images/trek-alibaba.jpg b/public/images/trek-alibaba.jpg
+new file mode 100644
+index 0000000..94a5938
+Binary files /dev/null and b/public/images/trek-alibaba.jpg differ
+diff --git a/public/images/trek-refinery.jpg b/public/images/trek-refinery.jpg
+new file mode 100644
+index 0000000..b4a0bf5
+Binary files /dev/null and b/public/images/trek-refinery.jpg differ
+diff --git a/public/images/workshop.jpg b/public/images/workshop.jpg
+new file mode 100644
+index 0000000..f798e46
+Binary files /dev/null and b/public/images/workshop.jpg differ
+diff --git a/public/index.html b/public/index.html
+new file mode 100644
+index 0000000..b1da1e3
+--- /dev/null
++++ b/public/index.html
+@@ -0,0 +1,552 @@
++<!DOCTYPE html>
++<html lang="en">
++<head>
++<meta charset="UTF-8" />
++<meta name="viewport" content="width=device-width, initial-scale=1.0" />
++<title>Hi World Club — Explore Well | Treks, Workshops & CSR</title>
++<meta name="description" content="Hi World Club: one part industry immersion, one part hard skills, one part giving back. Join treks to Alibaba HQ & a private refinery island, deck-design workshops, and volunteer book drives." />
++<meta property="og:title" content="Hi World Club — Explore Well" />
++<meta property="og:description" content="Treks · Workshops · CSR — Explore well with us." />
++<meta property="og:type" content="website" />
++<meta property="og:image" content="/images/cohort.jpg" />
++<meta name="theme-color" content="#101735" />
++<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='10' y='6' width='12' height='22' rx='3' fill='%23ee6a24'/%3E%3Crect x='10' y='2' width='12' height='5' rx='1.5' fill='%23111'/%3E%3C/svg%3E" />
++<link rel="preconnect" href="https://fonts.googleapis.com" />
++<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
++<link rel="preload" as="image" href="/images/cohort.jpg" />
++<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap" rel="stylesheet" />
++<link rel="stylesheet" href="/css/styles.css" />
++</head>
++<body>
++
++<div class="laser" id="laser" aria-hidden="true"></div>
++<div class="blackout" id="blackout" role="button" tabindex="0" aria-label="Screen blanked — click to resume">Screen blanked · click or press any key</div>
++<div class="toast" id="toast" role="status" aria-live="polite"></div>
++
++<!-- ============ NAV ============ -->
++<header class="nav" id="nav">
++  <a href="#top" class="brand" aria-label="Hi World Club home"><span class="brand-mark" aria-hidden="true"></span>Hi World Club</a>
++  <nav class="nav-links" id="navLinks" aria-label="Primary">
++    <a href="#moments">Moments</a>
++    <a href="#pillars">Pillars</a>
++    <a href="#" data-open="treks">Treks</a>
++    <a href="#" data-open="craft">Workshops</a>
++    <a href="#" data-open="impact">CSR</a>
++    <a href="#" data-open="cohort">Cohort</a>
++    <button class="btn btn-ink btn-sm" data-open="join">Join</button>
++  </nav>
++  <button class="burger" id="burger" aria-label="Open menu" aria-expanded="false" aria-controls="navLinks"><span></span><span></span><span></span></button>
++</header>
++
++<main>
++<!-- ============ PAGE 1 : POSTER ============ -->
++<section class="poster" id="top" aria-label="Hi World Club poster">
++  <div class="hero-bg" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
++
++  <p class="hero-eyebrow reveal"><span class="pulse" aria-hidden="true"></span>Hi World Club · Est. 2024 · Hangzhou</p>
++
++  <!-- "HI" made of vials + lanyards -->
++  <div class="fit-wrap reveal" style="--depth:1">
++    <div class="hi-art fit" data-w="434" data-h="330" aria-label="The word HI spelled with amber vials and two lanyards" role="img">
++      <div class="vgrid" aria-hidden="true">
++        <i class="vial" style="--h:68px"></i><i class="vial" style="--h:68px"></i>
++        <i class="vial" style="--h:34px"></i><i class="vial" style="--h:34px"></i>
++        <i class="vial" style="--h:76px"></i><i class="vial" style="--h:76px"></i>
++        <i class="vial" style="--h:66px"></i><i class="vial" style="--h:66px"></i>
++      </div>
++      <div class="xbar" aria-hidden="true">
++        <div class="xrow"><i class="vial lie" style="--l:56px"></i><i class="vial lie" style="--l:22px"></i></div>
++        <div class="xrow"><i class="vial lie cap-left" style="--l:56px"></i><i class="vial lie" style="--l:22px"></i></div>
++      </div>
++
++      <div class="lanyard l1">
++        <svg class="strap" viewBox="0 0 70 200" aria-hidden="true">
++          <defs><path id="lp1" d="M31 199 C 24 150, 7 72, 11 32 C 14 8, 44 2, 52 20 C 60 38, 51 120, 40 199" /></defs>
++          <use href="#lp1" class="s-base" /><use href="#lp1" class="s-sheen" />
++          <text dy="2.3"><textPath href="#lp1" startOffset="14%">✦ Hi World Club</textPath></text>
++          <text dy="2.3"><textPath href="#lp1" startOffset="60%">✦ Hi World Club</textPath></text>
++        </svg>
++        <span class="clip" aria-hidden="true"></span>
++        <button class="badge" id="nfcBadge" aria-label="Tap the NFC badge to join the club">
++          <span class="b-brand">Hi World</span>
++          <svg width="22" height="18" viewBox="0 0 24 20" fill="none" stroke="#333" stroke-width="1.8" stroke-linecap="round" style="margin-top:8px" aria-hidden="true"><path d="M6 5c2 3 2 7 0 10" /><path d="M11 3c3 4 3 10 0 14" /><path d="M16 1c4 5 4 13 0 18" /></svg>
++          <span class="b-small">NFC · TAP</span>
++          <span class="ripple" aria-hidden="true"></span>
++          <span class="barcode" aria-hidden="true"></span>
++        </button>
++      </div>
++
++      <div class="lanyard l2">
++        <svg class="strap" viewBox="0 0 70 200" aria-hidden="true">
++          <defs><path id="lp2" d="M30 199 C 20 150, 8 76, 14 34 C 18 8, 46 4, 54 22 C 62 42, 52 122, 40 199" /></defs>
++          <use href="#lp2" class="s-base" /><use href="#lp2" class="s-sheen" />
++          <text dy="2.3"><textPath href="#lp2" startOffset="14%">✦ Hi World Club</textPath></text>
++          <text dy="2.3"><textPath href="#lp2" startOffset="60%">✦ Hi World Club</textPath></text>
++        </svg>
++        <span class="clip" aria-hidden="true"></span>
++        <button class="badge" data-open="cohort" aria-label="Member badge — open The Cohort">
++          <span class="b-brand">Hi World</span>
++          <svg class="avatar" viewBox="0 0 26 28" aria-hidden="true"><rect width="26" height="28" fill="#e6ecf5" /><circle cx="13" cy="11" r="5.2" fill="#f1c9a5" /><path d="M7.6 9.5c0-4 2.6-5.8 5.4-5.8s5.4 1.8 5.4 5.8c-1.4-1.6-3.2-2.2-5.4-2.2S9 7.9 7.6 9.5z" fill="#1b1b1f" /><path d="M3 28c.6-6 4.8-9 10-9s9.4 3 10 9z" fill="#1c2340" /></svg>
++          <span class="b-name" id="badgeName">Club Member</span>
++          <span class="b-role">Visitor</span>
++          <span class="barcode" aria-hidden="true"></span>
++        </button>
++      </div>
++
++      <div class="rcol" aria-hidden="true">
++        <i class="vial" style="--h:68px"></i><i class="vial" style="--h:34px"></i>
++        <i class="vial" style="--h:76px"></i><i class="vial" style="--h:66px"></i>
++      </div>
++    </div>
++  </div>
++
++  <h1 class="taglines reveal">
++    <span>One part industry immersion.</span>
++    <span>One part hard skills.</span>
++    <span>One part giving back.</span>
++    <a href="#pillars" class="accent">Explore well.</a>
++  </h1>
++
++  <p class="hero-sub reveal">Industry treks · Deck-design workshops · Volunteer book drives — a student club for the endlessly curious.</p>
++  <div class="hero-cta reveal">
++    <button class="btn btn-ink btn-lg" data-open="join">Join the club</button>
++    <a class="btn btn-lg" href="#moments">See moments ↓</a>
++  </div>
++
++  <!-- "WORLD" made of books, pens, remotes, tubes -->
++  <div class="fit-wrap reveal" style="--depth:-.7">
++    <div class="world-art fit" data-w="840" data-h="192" aria-label="The word WORLD spelled with books, pens, presenter remotes and test tubes" role="group">
++      <div class="letter" style="left:0;width:232px" tabindex="0" role="button" data-info="W — three hardcovers, a notebook &amp; a pen: the reading we do.">
++        <i class="book" style="--c:#f07a2a;left:18px;top:6px;width:34px;height:172px;transform:rotate(-17deg)"></i>
++        <i class="book" style="--c:#7b3fa6;left:68px;top:8px;width:32px;height:170px;transform:rotate(12deg)"></i>
++        <i class="book" style="--c:#1e8a4a;left:112px;top:6px;width:34px;height:172px;transform:rotate(-12deg)"></i>
++        <i class="book note" style="left:164px;top:10px;width:34px;height:168px;transform:rotate(13deg)"></i>
++        <i class="pen" style="left:160px;top:-2px;width:8px;height:150px;transform:rotate(13deg)"></i>
++      </div>
++      <div class="letter" style="left:248px;width:146px" tabindex="0" role="button" data-info="O — slim books framed by a presenter remote: workshop tools.">
++        <i class="book flat" style="--c:#2f86c7;left:34px;top:8px;width:96px;height:13px"></i>
++        <i class="book flat" style="--c:#e9ecef;left:30px;top:21px;width:100px;height:12px"></i>
++        <i class="rmini" style="left:4px;top:34px;width:30px;height:116px"></i>
++        <i class="book" style="--c:#f2c230;left:112px;top:36px;width:12px;height:116px"></i>
++        <i class="book" style="--c:#e0493b;left:124px;top:38px;width:12px;height:114px"></i>
++        <i class="book flat" style="--c:#f07b3a;left:30px;top:154px;width:104px;height:12px"></i>
++        <i class="book flat" style="--c:#2f86c7;left:32px;top:166px;width:100px;height:13px"></i>
++      </div>
++      <div class="letter" style="left:410px;width:130px" tabindex="0" role="button" data-info="R — a red hardcover, a yellow block &amp; a clicker.">
++        <i class="book" style="--c:#d8262c;left:0;top:6px;width:40px;height:172px"></i>
++        <i class="block" style="left:40px;top:6px;width:72px;height:84px"></i>
++        <i class="rmini" style="left:66px;top:86px;width:28px;height:104px;transform:rotate(-30deg)"></i>
++      </div>
++      <div class="letter" style="left:564px;width:130px" tabindex="0" role="button" data-info="L — highlighters &amp; a pen: always take notes.">
++        <i class="hl" style="left:6px;top:4px;width:22px;height:140px"></i>
++        <i class="pen" style="left:42px;top:2px;width:10px;height:146px"></i>
++        <i class="hl lie" style="left:6px;top:156px;width:122px;height:18px"></i>
++      </div>
++      <div class="letter" style="left:704px;width:136px" tabindex="0" role="button" data-info="D — a blue book and test tubes: curiosity, measured.">
++        <i class="book" style="--c:#1f8fd6;left:0;top:6px;width:42px;height:172px"></i>
++        <i class="tube" style="left:42px;top:18px;width:92px;height:15px;transform:rotate(24deg);transform-origin:left center"></i>
++        <i class="tube v" style="left:118px;top:62px;width:15px;height:80px"></i>
++        <i class="tube" style="left:42px;top:158px;width:92px;height:15px;transform:rotate(-24deg);transform-origin:left center"></i>
++      </div>
++    </div>
++  </div>
++
++  <div class="poster-foot reveal">
++    <p>Treks: <button class="inline-link" data-open="treks" data-tab="alibaba">Alibaba HQ (Hangzhou)</button> &amp; <button class="inline-link" data-open="treks" data-tab="refinery">Private Refinery Island</button></p>
++    <p>Workshops: <button class="inline-link" data-open="craft">Presentation Deck Design</button> • CSR: <button class="inline-link" data-open="impact" data-tab="drive">Volunteer Book Drives</button></p>
++    <p class="join-line"><button class="inline-link" data-open="join">JOIN:</button> <button class="inline-link copy-chip" data-copy="broccoli18321" aria-label="Copy WeChat ID broccoli18321">wc: broccoli18321 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg></button></p>
++  </div>
++
++  <div class="stats-band reveal" aria-live="polite" aria-label="Live club stats">
++    <span class="stat-chip status" id="netChip"><span class="dot" aria-hidden="true"></span><span>Live from the club server</span></span>
++    <span class="stat-chip card"><b id="statBooks" class="stat-hl">…</b><span>books pledged <em id="statBooksGoal">of 500 goal</em></span></span>
++    <span class="stat-chip card"><b id="statMembers">…</b><span>members &amp; applicants</span></span>
++    <span class="stat-chip card"><b aria-hidden="true">🎟</b><span id="statSeats">trek seats</span></span>
++  </div>
++
++  <a href="#moments" class="scroll-cue" aria-label="Scroll to moments"></a>
++</section>
++
++<!-- ============ MOMENTS / GALLERY ============ -->
++<section class="moments" id="moments" aria-label="Club moments gallery">
++  <div class="moments-inner">
++    <p class="m-eyebrow reveal">Field notes · in photos</p>
++    <h2 class="reveal">Moments from the club</h2>
++    <p class="sub reveal">Campus tours, island ferries, clickers, and boxes of donated books. Click any photo to view it up close.</p>
++    <div class="gallery reveal">
++      <figure class="g-item" tabindex="0" role="button" data-caption="The Rum Diary Cohort — trekkers, builders, givers" aria-label="Enlarge cohort photo">
++        <img src="/images/cohort.jpg" alt="Diverse group of happy student club members with lanyards on campus" loading="lazy" />
++        <figcaption>The Cohort</figcaption>
++      </figure>
++      <figure class="g-item" tabindex="0" role="button" data-caption="Alibaba HQ, Hangzhou — platform operations up close" aria-label="Enlarge Alibaba trek photo">
++        <img src="/images/trek-alibaba.jpg" alt="Student tour group at a modern tech headquarters campus" loading="lazy" />
++        <figcaption>Alibaba HQ Trek</figcaption>
++      </figure>
++      <figure class="g-item" tabindex="0" role="button" data-caption="Private refinery island — ferry in at dusk" aria-label="Enlarge refinery photo">
++        <img src="/images/trek-refinery.jpg" alt="Island refinery glowing at dusk seen from the water" loading="lazy" />
++        <figcaption>Refinery Island</figcaption>
++      </figure>
++      <figure class="g-item" tabindex="0" role="button" data-caption="Deck Design workshop — bring a deck, leave with a better one" aria-label="Enlarge workshop photo">
++        <img src="/images/workshop.jpg" alt="Student presenting slides with a clicker in a workshop" loading="lazy" />
++        <figcaption>Workshops</figcaption>
++      </figure>
++      <figure class="g-item" tabindex="0" role="button" data-caption="Volunteer book drive — sort, label, deliver" aria-label="Enlarge book drive photo">
++        <img src="/images/bookdrive.jpg" alt="Volunteers sorting donated books into boxes" loading="lazy" />
++        <figcaption>Book Drives</figcaption>
++      </figure>
++      <figure class="g-item" tabindex="0" role="button" data-caption="The explorer's desk — vials, notebooks, clicker, pass" aria-label="Enlarge desk photo">
++        <img src="/images/gallery-campus.jpg" alt="Flat lay of vials, notebooks, pens, remote and lanyard" loading="lazy" />
++        <figcaption>Explorer's Desk</figcaption>
++      </figure>
++    </div>
++  </div>
++</section>
++
++<!-- ============ PAGE 2 : FOUR PILLARS ============ -->
++<section class="pillars" id="pillars" aria-label="Our four pillars">
++  <div class="pillar-grid" id="pillarGrid">
++    <span class="pline v" aria-hidden="true"></span>
++    <span class="pline h" id="hline" aria-hidden="true"></span>
++
++    <article class="q q1" tabindex="0" role="button" data-open="treks" data-title="Industry Treks" aria-label="01 Industry Treks — open details">
++      <span class="q-hint" aria-hidden="true">Open treks ↗</span>
++      <div class="q-obj" aria-hidden="true">
++        <div class="cork-bottle"><span class="cork"></span><span class="neck"></span><span class="glass"><span class="b-label">Hangzhou</span></span></div>
++      </div>
++      <h2 class="q-label">01 /
++Industry
++Treks</h2>
++    </article>
++
++    <article class="q q2" tabindex="0" role="button" data-open="craft" data-title="Practical Craft" aria-label="02 Practical Craft — open workshop">
++      <span class="q-hint" aria-hidden="true">Try the remote ↗</span>
++      <div class="q-obj">
++        <div class="remote" aria-label="Presenter remote — interactive">
++          <button class="r-laser" data-remote="laser" aria-label="Toggle laser pointer" title="Laser pointer"></button>
++          <div class="r-pad">
++            <button class="r-btn r-home" data-remote="home" aria-label="Back to top" title="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11 12 4l9 7v9h-6v-6H9v6H3z" /></svg></button>
++            <button class="r-btn r-arrow" data-remote="prev" aria-label="Previous pillar" title="Previous"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m15 5-7 7 7 7" /></svg></button>
++            <button class="r-btn r-arrow" data-remote="next" aria-label="Next pillar" title="Next"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg></button>
++            <button class="r-btn r-sm" data-remote="screen" aria-label="Open the workshop deck" title="Start deck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="7" width="13" height="10" rx="1" /><path d="M8 4h13v10" /></svg></button>
++            <button class="r-btn r-sm" data-remote="blank" aria-label="Blank the screen" title="Blank screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="1" /></svg></button>
++          </div>
++          <span class="r-slot" aria-hidden="true"></span>
++        </div>
++      </div>
++      <h2 class="q-label">02 /
++Practical
++Craft</h2>
++    </article>
++
++    <article class="q q3" tabindex="0" role="button" data-open="impact" data-tab="drive" data-title="Social Impact" aria-label="03 Social Impact — open book drive">
++      <h2 class="q-label">03 /
++Social
++Impact</h2>
++      <div class="q-obj" aria-hidden="true">
++        <div class="tomes">
++          <button class="tome t1" data-open="impact" data-tab="shelf" data-book="craft" aria-label="Open the book Craft Notes" tabindex="-1"><span>CRAFT NOTES</span></button>
++          <button class="tome t2" data-open="impact" data-tab="shelf" data-book="reportage" aria-label="Open the book Reportage Techniques" tabindex="-1"><span>REPORTAGE TECHNIQUES</span></button>
++        </div>
++      </div>
++      <span class="q-hint" aria-hidden="true">Pledge a book ↗</span>
++    </article>
++
++    <article class="q q4" tabindex="0" role="button" data-open="cohort" data-title="The Cohort" aria-label="04 The Cohort — get your visitor pass">
++      <h2 class="q-label">04 /
++The
++Cohort</h2>
++      <div class="q-obj" aria-hidden="true">
++        <div class="pass-wrap">
++          <svg class="pass-strap" viewBox="0 0 350 440" aria-hidden="true">
++            <defs><path id="pstrap" d="M128 262 C 118 190, 98 84, 134 34 C 172 -12, 256 6, 294 96 C 330 184, 346 322, 330 412 C 324 444, 292 440, 262 420" /></defs>
++            <use href="#pstrap" class="ps-base" /><use href="#pstrap" class="ps-weave" />
++          </svg>
++          <div class="pass-swing">
++            <span class="pass-clip"></span>
++            <div class="pass">
++              <div class="pass-card">
++                <strong>VISITOR PASS</strong>
++                <em>– THE RUM DIARY</em>
++                <em>COHORT</em>
++                <em class="pass-issued" id="passIssued" hidden></em>
++              </div>
++            </div>
++          </div>
++        </div>
++      </div>
++      <span class="q-hint" aria-hidden="true">Get your pass ↗</span>
++    </article>
++  </div>
++</section>
++</main>
++
++<footer class="site-foot">
++  <a href="#top" class="brand"><span class="brand-mark" aria-hidden="true"></span>Hi World Club</a>
++  <p class="foot-mid">Treks · Workshops · CSR — Explore well. <a href="/admin.html" class="foot-admin">Admin</a></p>
++  <div style="display:flex;gap:10px;flex-wrap:wrap">
++    <button class="btn btn-sm" data-copy="broccoli18321">wc: broccoli18321</button>
++    <button class="btn btn-ink btn-sm" data-open="join">Join the club</button>
++  </div>
++</footer>
++
++<!-- ============ MODAL: TREKS ============ -->
++<div class="modal" id="m-treks" hidden role="dialog" aria-modal="true" aria-labelledby="t-treks">
++  <div class="m-card">
++    <button class="m-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19" /></svg></button>
++    <p class="m-eyebrow">01 / Industry Immersion</p>
++    <h3 class="m-title" id="t-treks">Industry Treks</h3>
++    <p class="m-lead">Get off campus and onto the floors where industries are actually run. Every trek has a host briefing, a Q&amp;A with the people doing the work, and a group debrief afterwards.</p>
++    <div data-tabs>
++      <div class="tabs" role="tablist" aria-label="Trek destinations">
++        <button class="tab active" role="tab" data-tab-btn="alibaba" aria-selected="true">Alibaba HQ · Hangzhou</button>
++        <button class="tab" role="tab" data-tab-btn="refinery" aria-selected="false">Private Refinery Island</button>
++      </div>
++      <div class="panel" data-panel="alibaba" role="tabpanel">
++        <figure class="m-photo">
++          <img src="/images/trek-alibaba.jpg" alt="Student tour group at a modern tech headquarters campus" loading="lazy" />
++          <figcaption>Alibaba HQ, Hangzhou — platform operations up close.</figcaption>
++        </figure>
++        <div class="chips"><span class="chip">1 day</span><span class="chip">Hangzhou</span><span class="chip">E-commerce · Cloud · Logistics</span><span class="chip hot" data-seats-chip="alibaba">~20 seats</span></div>
++        <div class="seat-meter" aria-live="polite"><div class="track" style="flex:1"><i data-seats-bar="alibaba"></i></div><b data-seats-left="alibaba">Loading seats…</b></div>
++        <div class="two-col m-sec">
++          <div><p class="m-h">Itinerary</p>
++            <ul class="timeline">
++              <li><b>09:30</b> Arrival, visitor badge &amp; lanyard pickup</li>
++              <li><b>10:00</b> Campus walk and company exhibition</li>
++              <li><b>11:30</b> Host talk: how platforms scale</li>
++              <li><b>13:00</b> Lunch in the staff canteen</li>
++              <li><b>14:30</b> Q&amp;A with product &amp; ops teams</li>
++              <li><b>16:00</b> Group debrief &amp; reflections</li>
++            </ul></div>
++          <div><p class="m-h">You'll bring home</p>
++            <ul class="ticks"><li>A first-hand look at platform operations</li><li>Notes from a live Q&amp;A with practitioners</li><li>A one-page trek brief you write with your team</li></ul></div>
++        </div>
++      </div>
++      <div class="panel" data-panel="refinery" role="tabpanel" hidden>
++        <figure class="m-photo">
++          <img src="/images/trek-refinery.jpg" alt="Island refinery glowing at dusk seen from the water" loading="lazy" />
++          <figcaption>Private refinery island — ferry in at dusk.</figcaption>
++        </figure>
++        <div class="chips"><span class="chip">2 days</span><span class="chip">Island site · ferry transfer</span><span class="chip">Energy · Operations · Safety</span><span class="chip hot" data-seats-chip="refinery">~16 seats</span></div>
++        <div class="seat-meter" aria-live="polite"><div class="track" style="flex:1"><i data-seats-bar="refinery"></i></div><b data-seats-left="refinery">Loading seats…</b></div>
++        <div class="two-col m-sec">
++          <div><p class="m-h">Itinerary</p>
++            <ul class="timeline">
++              <li><b>Day 1</b> Ferry transfer and site safety induction</li>
++              <li><b>Day 1</b> Control room walkthrough</li>
++              <li><b>Day 1</b> Evening: engineers' fireside chat</li>
++              <li><b>Day 2</b> Logistics &amp; marine terminal tour</li>
++              <li><b>Day 2</b> Panel: careers in heavy industry</li>
++              <li><b>Day 2</b> Debrief on the ferry home</li>
++            </ul></div>
++          <div><p class="m-h">You'll bring home</p>
++            <ul class="ticks"><li>An inside view of large-scale operations</li><li>Safety culture lessons you can apply anywhere</li><li>Contacts across engineering &amp; supply chain</li></ul>
++            <p class="note">PPE is provided. ID details are needed in advance for site access.</p></div>
++        </div>
++      </div>
++    </div>
++    <div class="reserve-box">
++      <p class="m-h">Reserve a trek seat</p>
++      <form id="reserveForm" class="form-grid" novalidate>
++        <div class="field"><label for="resName">Name *</label><input id="resName" type="text" autocomplete="name" maxlength="80" /></div>
++        <div class="field"><label for="resWc">WeChat ID *</label><input id="resWc" type="text" maxlength="60" /></div>
++        <div class="field"><label for="resTrek">Trek</label>
++          <select id="resTrek"><option value="alibaba">Alibaba HQ · Hangzhou</option><option value="refinery">Private Refinery Island</option></select>
++        </div>
++        <div class="field" style="justify-content:flex-end"><button class="btn btn-ink" type="submit">Reserve my seat</button></div>
++      </form>
++    </div>
++    <div class="m-actions">
++      <button class="btn btn-ink" data-open="join" data-interest="treks">Join the club</button>
++      <button class="btn" data-copy="broccoli18321">Ask on WeChat</button>
++    </div>
++  </div>
++</div>
++
++<!-- ============ MODAL: CRAFT ============ -->
++<div class="modal" id="m-craft" hidden role="dialog" aria-modal="true" aria-labelledby="t-craft">
++  <div class="m-card">
++    <button class="m-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19" /></svg></button>
++    <p class="m-eyebrow">02 / Hard Skills</p>
++    <h3 class="m-title" id="t-craft">Practical Craft</h3>
++    <p class="m-lead">Workshop: <strong>Presentation Deck Design</strong>. Flip through a preview below. Use the arrows, swipe, or press ← →. Press <b>B</b> to blank the screen the way a presenter would.</p>
++
++    <figure class="m-photo">
++      <img src="/images/workshop.jpg" alt="Student presenting slides with a clicker in a workshop" loading="lazy" />
++      <figcaption>Last cohort's pitch round — clicker technique in action.</figcaption>
++    </figure>
++
++    <div class="deck" id="deck" aria-roledescription="carousel" aria-label="Deck design preview">
++      <div class="slides">
++        <div class="slide dark"><span class="s-k">Workshop · Deck Design</span><h4>Decks that decide.</h4><p>Three sessions, one clicker, and no wall-of-text slides.</p></div>
++        <div class="slide"><span class="s-k">Rule 01</span><h4>Lead with the answer.</h4><p>Put the conclusion in the title, then back it with three points at most.</p><div class="pyr" aria-hidden="true"><span></span><span></span><span></span><span></span></div></div>
++        <div class="slide"><span class="s-k">Rule 02</span><h4>One slide, one message.</h4><p>If a slide needs two titles, it needs to be two slides.</p><span class="bignum" aria-hidden="true">1</span></div>
++        <div class="slide"><span class="s-k">Rule 03</span><h4>Make charts speak.</h4><p>Highlight the one bar that matters and label it directly. Grey out everything else.</p><div class="bars" aria-hidden="true"><span style="height:40%"></span><span style="height:55%"></span><span class="hi" style="height:92%"></span><span style="height:48%"></span><span style="height:35%"></span></div></div>
++        <div class="slide"><span class="s-k">Rule 04</span><h4>Rehearse with the clicker.</h4><p>Blank the screen (B), pause, and let the room look at you. Try the ▭ button on the remote.</p></div>
++        <div class="slide dark"><span class="s-k">Your turn</span><h4>Bring a deck. Leave with a better one.</h4><p>Live teardown, peer review, and a final pitch round.</p></div>
++      </div>
++      <span class="deck-bar" id="deckBar" aria-hidden="true"></span>
++    </div>
++    <div class="deck-ctrl">
++      <div class="deck-dots" id="deckDots" role="tablist" aria-label="Slides"></div>
++      <div class="ctrl-group">
++        <button class="icon-btn" id="deckBlank" aria-label="Blank screen" title="Blank screen (B)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="1" /></svg></button>
++        <button class="icon-btn" id="deckPrev" aria-label="Previous slide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m15 5-7 7 7 7" /></svg></button>
++        <span class="deck-count" id="deckCount">1 / 6</span>
++        <button class="icon-btn" id="deckNext" aria-label="Next slide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg></button>
++      </div>
++    </div>
++
++    <div class="m-sec">
++      <p class="m-h">Sessions</p>
++      <div class="sessions">
++        <div class="session"><span>SESSION 1</span><b>Storyline</b><p>Pyramid principle, action titles, and the storyboard.</p></div>
++        <div class="session"><span>SESSION 2</span><b>Slide craft</b><p>Layout grids, typography, and charts that speak.</p></div>
++        <div class="session"><span>SESSION 3</span><b>Delivery</b><p>Clicker technique, pacing, and a live pitch round.</p></div>
++      </div>
++    </div>
++    <div class="m-actions">
++      <button class="btn btn-ink" data-open="join" data-interest="workshops">Save my seat</button>
++    </div>
++  </div>
++</div>
++
++<!-- ============ MODAL: IMPACT ============ -->
++<div class="modal" id="m-impact" hidden role="dialog" aria-modal="true" aria-labelledby="t-impact">
++  <div class="m-card">
++    <button class="m-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19" /></svg></button>
++    <p class="m-eyebrow">03 / Giving Back</p>
++    <h3 class="m-title" id="t-impact">Social Impact</h3>
++    <p class="m-lead">Volunteer book drives: we collect new and gently used books, then sort, label, and deliver them to under-resourced school libraries.</p>
++    <div data-tabs>
++      <div class="tabs" role="tablist" aria-label="Impact tabs">
++        <button class="tab active" role="tab" data-tab-btn="drive" aria-selected="true">Book Drive</button>
++        <button class="tab" role="tab" data-tab-btn="shelf" aria-selected="false">Reading Shelf</button>
++      </div>
++      <div class="panel" data-panel="drive" role="tabpanel">
++        <figure class="m-photo">
++          <img src="/images/bookdrive.jpg" alt="Volunteers sorting donated books into boxes" loading="lazy" />
++          <figcaption>Saturday sorting shift — every box goes to a school library.</figcaption>
++        </figure>
++        <div class="meter m-sec">
++          <div class="meter-top">
++            <div class="meter-num"><span id="bookCount">0</span><small>/ 500 books</small></div>
++            <span class="chip" id="bookLeft">—</span>
++          </div>
++          <div class="track"><i id="bookBar"></i></div>
++        </div>
++        <form id="pledgeForm" class="m-sec" novalidate>
++          <div class="form-grid">
++            <div class="field"><label for="plName">Your name (optional)</label><input id="plName" type="text" placeholder="Anonymous" maxlength="40" /></div>
++            <div class="field"><label for="plGenre">Book type</label>
++              <select id="plGenre">
++                <option>Children's picture books</option><option>Middle-grade fiction</option><option>STEM &amp; science</option><option>English learning</option><option>Classics</option>
++              </select></div>
++            <div class="field"><span class="lbl" id="qtyLbl">Quantity</span>
++              <div class="stepper" role="group" aria-labelledby="qtyLbl"><button type="button" id="qMinus" aria-label="Decrease">−</button><output id="qOut">1</output><button type="button" id="qPlus" aria-label="Increase">+</button></div></div>
++            <div class="field" style="justify-content:flex-end"><button class="btn btn-ink" type="submit">Pledge books</button></div>
++          </div>
++        </form>
++        <div class="m-sec"><p class="m-h">Recent pledges</p><ul class="pledges" id="pledgeList"></ul></div>
++      </div>
++      <div class="panel" data-panel="shelf" role="tabpanel" hidden>
++        <div class="shelf m-sec">
++          <div class="shelf-book" id="book-craft"><div class="mini-tome" aria-hidden="true"><span>CRAFT NOTES</span></div><div><h5>Craft Notes</h5><p>The club's workshop handbook. Its proceeds and review copies go to the drive.</p><ul><li>Storylines &amp; action titles</li><li>Slide grids &amp; typography</li><li>Delivery checklists</li></ul></div></div>
++          <div class="shelf-book" id="book-reportage"><div class="mini-tome" aria-hidden="true"><span>REPORTAGE TECHNIQUES</span></div><div><h5>Reportage Techniques</h5><p>Field notes on observing, interviewing, and writing up what you saw on each trek.</p><ul><li>Asking better questions</li><li>Observation logs</li><li>The one-page trek brief</li></ul></div></div>
++        </div>
++      </div>
++    </div>
++    <div class="m-actions">
++      <button class="btn btn-ink" data-open="join" data-interest="csr">Volunteer at a drive</button>
++    </div>
++  </div>
++</div>
++
++<!-- ============ MODAL: COHORT ============ -->
++<div class="modal" id="m-cohort" hidden role="dialog" aria-modal="true" aria-labelledby="t-cohort">
++  <div class="m-card">
++    <button class="m-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19" /></svg></button>
++    <p class="m-eyebrow">04 / The People</p>
++    <h3 class="m-title" id="t-cohort">The Cohort</h3>
++    <p class="m-lead">Meet <strong>The Rum Diary Cohort</strong>. It's a small group that treks, builds, and gives back together. Issue your visitor pass below, and it will appear on the lanyard on the page.</p>
++    <figure class="m-photo">
++      <img src="/images/cohort.jpg" alt="Diverse group of happy student club members with lanyards on campus" loading="lazy" />
++      <figcaption>The Rum Diary Cohort on campus — about 20 members strong.</figcaption>
++    </figure>
++    <div class="cohort-grid m-sec">
++      <div class="form-grid" style="grid-template-columns:1fr">
++        <div class="field" id="pnField"><label for="passName">Name on pass</label><input id="passName" type="text" maxlength="28" placeholder="e.g. Lin Chen" autocomplete="name" /><span class="err-msg">Please enter a name.</span></div>
++        <div class="field"><label for="passTrack">Track</label>
++          <select id="passTrack"><option>All-rounder</option><option>Treks</option><option>Craft</option><option>Impact</option></select></div>
++        <div style="display:flex;gap:10px;flex-wrap:wrap">
++          <button class="btn btn-ink" id="issuePass" type="button">Issue my pass</button>
++          <button class="btn" id="resetPass" type="button">Reset</button>
++        </div>
++        <ul class="ticks" style="margin-top:8px"><li>Monthly treks &amp; workshops</li><li>A peer group of about 20 members</li><li>Shared notes, decks &amp; reading lists</li></ul>
++      </div>
++      <div>
++        <div class="pv" aria-live="polite">
++          <div class="pv-card">
++            <strong>VISITOR PASS</strong>
++            <em>– THE RUM DIARY</em><em>COHORT</em>
++            <span class="pv-name" id="pvName">Your Name</span>
++            <span class="pv-track" id="pvTrack">All-rounder</span>
++          </div>
++        </div>
++        <p class="m-h" style="margin-top:16px">Recently issued</p>
++        <div class="recent-passes" id="recentPasses"><span class="chip">Loading…</span></div>
++      </div>
++    </div>
++    <div class="m-actions">
++      <button class="btn btn-ink" data-open="join" data-interest="treks">Join the cohort</button>
++    </div>
++  </div>
++</div>
++
++<!-- ============ MODAL: JOIN ============ -->
++<div class="modal" id="m-join" hidden role="dialog" aria-modal="true" aria-labelledby="t-join">
++  <div class="m-card">
++    <button class="m-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19" /></svg></button>
++    <div id="joinFormWrap">
++      <p class="m-eyebrow">Join</p>
++      <h3 class="m-title" id="t-join">Explore well with us</h3>
++      <p class="m-lead">Tell us a little about yourself, and we'll reach out on WeChat.</p>
++      <form id="joinForm" class="m-sec" novalidate>
++        <div class="form-grid">
++          <div class="field"><label for="jName">Name *</label><input id="jName" type="text" autocomplete="name" maxlength="80" /><span class="err-msg">Your name is required.</span></div>
++          <div class="field"><label for="jWc">Your WeChat ID *</label><input id="jWc" type="text" maxlength="60" /><span class="err-msg">We need this to add you.</span></div>
++          <div class="field full"><label for="jOrg">School / organisation</label><input id="jOrg" type="text" autocomplete="organization" maxlength="120" /></div>
++          <div class="field full"><span class="lbl">I'm interested in</span>
++            <div class="checks">
++              <label class="check"><input type="checkbox" name="interest" value="treks" /><span>Industry Treks</span></label>
++              <label class="check"><input type="checkbox" name="interest" value="workshops" /><span>Workshops</span></label>
++              <label class="check"><input type="checkbox" name="interest" value="csr" /><span>CSR · Book Drives</span></label>
++            </div></div>
++          <div class="field full"><label for="jMsg">Anything else?</label><textarea id="jMsg" placeholder="What would you like to explore?" maxlength="2000"></textarea></div>
++        </div>
++        <div class="m-actions"><button class="btn btn-ink" type="submit">Send application</button></div>
++      </form>
++      <div class="wc-box"><div><div class="m-h" style="margin:0 0 4px">Or add us directly</div><code>wc: broccoli18321</code></div><button class="btn btn-sm" data-copy="broccoli18321">Copy ID</button></div>
++    </div>
++    <div id="joinDone" class="done" hidden>
++      <div class="done-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="m5 12 5 5 9-10" /></svg></div>
++      <h3 class="m-title" style="padding:0">Welcome, <span id="joinDoneName">explorer</span>.</h3>
++      <p class="m-lead" style="margin:0 auto">Your application is in. To speed things up, add us on WeChat and mention “Hi World Club”.</p>
++      <div class="wc-box" style="max-width:420px;margin:20px auto 0"><code>broccoli18321</code><button class="btn btn-ink btn-sm" data-copy="broccoli18321">Copy ID</button></div>
++      <div class="m-actions" style="justify-content:center"><button class="btn" id="joinAgain">Submit another</button><button class="btn" data-close>Done</button></div>
++    </div>
++  </div>
++</div>
++
++<!-- ============ LIGHTBOX ============ -->
++<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="Photo viewer">
++  <button class="m-close" data-close-lb aria-label="Close photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19" /></svg></button>
++  <figure>
++    <img id="lbImg" src="" alt="" />
++    <figcaption id="lbCap"></figcaption>
++  </figure>
++</div>
++
++<script src="/js/app.js" defer></script>
++</body>
++</html>
+diff --git a/public/js/admin.js b/public/js/admin.js
+new file mode 100644
+index 0000000..c84452d
+--- /dev/null
++++ b/public/js/admin.js
+@@ -0,0 +1,132 @@
++/* Hi World Club — admin dashboard. Token lives in sessionStorage only. */
++(() => {
++  'use strict';
++  const $ = (s) => document.querySelector(s);
++  const KEY = 'hw_admin_token';
++  let tab = 'apps';
++
++  const esc = (v) =>
++    String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
++
++  let toastT;
++  const toast = (m) => {
++    const t = $('#adToast');
++    t.textContent = m;
++    t.classList.add('show');
++    clearTimeout(toastT);
++    toastT = setTimeout(() => t.classList.remove('show'), 2800);
++  };
++
++  const token = () => sessionStorage.getItem(KEY) || '';
++
++  async function api(path) {
++    const res = await fetch(path, { headers: { 'x-admin-token': token() } });
++    const data = await res.json().catch(() => ({}));
++    if (res.status === 401) throw new Error('Invalid token — check ADMIN_TOKEN and try again.');
++    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
++    return data;
++  }
++
++  function setLocked(locked, msg) {
++    $('#adGate').hidden = !locked;
++    $('#adDash').hidden = locked;
++    $('#adStatus').classList.toggle('open', !locked);
++    $('#adStatusText').textContent = locked ? 'Locked' : 'Unlocked';
++    const err = $('#adErr');
++    if (msg) { err.textContent = msg; err.hidden = false; }
++    else err.hidden = true;
++  }
++
++  const COLS = {
++    apps: ['#', 'Name', 'WeChat', 'School / org', 'Interests', 'Message', 'Applied'],
++    res: ['#', 'Name', 'WeChat', 'Trek', 'Reserved'],
++    pledges: ['#', 'Name', 'Genre', 'Qty', 'Pledged'],
++    passes: ['#', 'Name', 'Track', 'Issued'],
++  };
++
++  function row(cells) {
++    return `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
++  }
++
++  function render(d) {
++    $('#adHead').innerHTML = `<tr>${COLS[tab].map((c) => `<th>${c}</th>`).join('')}</tr>`;
++    const body = $('#adBody');
++    let html = '';
++    if (tab === 'apps') {
++      html = d.applications.map((a) =>
++        row([a.id, esc(a.name), esc(a.wc), esc(a.org || '—'), (a.interests || []).map(esc).join(', ') || '—', esc(a.msg || '—'), esc(a.created_at)])
++      ).join('');
++    } else if (tab === 'res') {
++      const names = { alibaba: 'Alibaba HQ', refinery: 'Refinery Island' };
++      html = d.reservations.map((r) =>
++        row([r.id, esc(r.name), esc(r.wc), esc(names[r.trek] || r.trek), esc(r.created_at)])
++      ).join('');
++    } else if (tab === 'pledges') {
++      html = d.pledges.map((p) =>
++        row([p.id, esc(p.name), esc(p.genre), esc(p.qty), esc(p.created_at)])
++      ).join('');
++    } else {
++      html = d.passes.map((p) =>
++        row([p.id, esc(p.name), esc(p.track), esc(p.created_at)])
++      ).join('');
++    }
++    body.innerHTML = html;
++    $('#adEmpty').hidden = html !== '';
++  }
++
++  async function load() {
++    try {
++      const [stats, data] = await Promise.all([
++        api('/api/stats'),
++        tab === 'apps' ? api('/api/applications?limit=200')
++          : tab === 'res' ? api('/api/reservations?limit=200')
++          : tab === 'pledges' ? api('/api/pledges?limit=200')
++          : api('/api/passes/latest?limit=200'),
++      ]);
++      $('#adStats').innerHTML = `
++        <div class="ad-stat"><b class="stat-hl">${stats.books.pledged}<small style="font-size:14px;color:var(--muted)">/${stats.books.goal}</small></b><span>Books pledged</span></div>
++        <div class="ad-stat"><b>${stats.applications}</b><span>Applications</span></div>
++        <div class="ad-stat"><b>${stats.passes}</b><span>Passes issued</span></div>
++        <div class="ad-stat"><b>${stats.reservations.alibaba + stats.reservations.refinery}</b><span>Trek seats taken</span></div>`;
++      render(data);
++    } catch (e) {
++      if (/Invalid token/.test(e.message)) {
++        sessionStorage.removeItem(KEY);
++        setLocked(true, e.message);
++      } else toast(e.message);
++    }
++  }
++
++  $('#adUnlock').addEventListener('submit', async (e) => {
++    e.preventDefault();
++    const v = $('#adToken').value.trim();
++    if (!v) return;
++    sessionStorage.setItem(KEY, v);
++    $('#adToken').value = '';
++    try {
++      await api('/api/applications?limit=1');
++      setLocked(false);
++      load();
++    } catch (err) {
++      sessionStorage.removeItem(KEY);
++      setLocked(true, err.message);
++    }
++  });
++
++  $('#adLock').addEventListener('click', () => {
++    sessionStorage.removeItem(KEY);
++    setLocked(true);
++    toast('Locked. Token cleared from this tab.');
++  });
++  $('#adRefresh').addEventListener('click', load);
++  document.querySelectorAll('[data-atab]').forEach((b) =>
++    b.addEventListener('click', () => {
++      document.querySelectorAll('[data-atab]').forEach((x) => x.classList.toggle('active', x === b));
++      tab = b.dataset.atab;
++      load();
++    })
++  );
++
++  if (token()) { setLocked(false); load(); }
++  else setLocked(true);
++})();
+diff --git a/public/js/app.js b/public/js/app.js
+new file mode 100644
+index 0000000..d36ef95
+--- /dev/null
++++ b/public/js/app.js
+@@ -0,0 +1,740 @@
++/* ==========================================================================
++   Hi World Club — frontend app v2
++   All original poster interactions + live backend API (with offline fallback),
++   gallery lightbox, trek reservations, live stats.
++   ========================================================================== */
++(() => {
++  'use strict';
++
++  const $ = (s, c = document) => c.querySelector(s);
++  const $$ = (s, c = document) => [...c.querySelectorAll(s)];
++
++  /* ---------------- offline-safe storage ---------------- */
++  const store = {
++    get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
++    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
++  };
++
++  /* ---------------- tiny API client ---------------- */
++  const api = {
++    online: true,
++    async req(path, opts = {}) {
++      const ctrl = new AbortController();
++      const t = setTimeout(() => ctrl.abort(), 8000);
++      try {
++        const res = await fetch(path, {
++          headers: { 'Content-Type': 'application/json' },
++          signal: ctrl.signal,
++          ...opts,
++        });
++        const data = await res.json().catch(() => ({}));
++        if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
++        this.online = true;
++        document.body.classList.remove('is-offline');
++        return data;
++      } catch (err) {
++        if (err.name === 'AbortError') throw new Error('Request timed out. Please try again.');
++        throw err;
++      } finally {
++        clearTimeout(t);
++      }
++    },
++    get: (p) => api.req(p),
++    post: (p, body) => api.req(p, { method: 'POST', body: JSON.stringify(body) }),
++  };
++
++  function markOffline() {
++    api.online = false;
++    const chip = $('#netChip');
++    if (chip) { chip.classList.add('offline'); chip.querySelector('span:last-child').textContent = 'Offline mode'; }
++  }
++
++  /* ---------------- scale compositions to fit ---------------- */
++  function fitAll() {
++    $$('.fit').forEach((el) => {
++      const w = +el.dataset.w, h = +el.dataset.h, wrap = el.parentElement;
++      if (!w || !h || !wrap) return;
++      const s = Math.min(1, wrap.clientWidth / w);
++      el.style.transform = `scale(${s})`;
++      wrap.style.height = h * s + 'px';
++    });
++    const grid = $('#pillarGrid'), q3 = $('.q3');
++    if (grid && q3) grid.style.setProperty('--hy', q3.offsetTop + 'px');
++  }
++  addEventListener('resize', fitAll, { passive: true });
++  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitAll);
++
++  /* ---------------- nav ---------------- */
++  const nav = $('#nav'), burger = $('#burger');
++  const onScroll = () => nav.classList.toggle('scrolled', scrollY > 10);
++  addEventListener('scroll', onScroll, { passive: true });
++  onScroll();
++  burger.addEventListener('click', () => {
++    const o = nav.classList.toggle('menu-open');
++    burger.setAttribute('aria-expanded', String(o));
++    burger.setAttribute('aria-label', o ? 'Close menu' : 'Open menu');
++  });
++  $$('#navLinks a, #navLinks button').forEach((a) =>
++    a.addEventListener('click', () => {
++      nav.classList.remove('menu-open');
++      burger.setAttribute('aria-expanded', 'false');
++    })
++  );
++
++  /* ---------------- toast ---------------- */
++  let toastT;
++  function toast(msg) {
++    const t = $('#toast');
++    t.textContent = msg;
++    t.classList.add('show');
++    clearTimeout(toastT);
++    toastT = setTimeout(() => t.classList.remove('show'), 2800);
++  }
++
++  /* ---------------- copy to clipboard ---------------- */
++  async function copy(text) {
++    let ok = false;
++    try {
++      await navigator.clipboard.writeText(text);
++      ok = true;
++    } catch {
++      const ta = document.createElement('textarea');
++      ta.value = text;
++      ta.style.position = 'fixed';
++      ta.style.opacity = '0';
++      document.body.appendChild(ta);
++      ta.select();
++      try { ok = document.execCommand('copy'); } catch {}
++      ta.remove();
++    }
++    toast(ok ? `Copied “${text}”. Paste it in WeChat › Add Contacts.` : `WeChat ID: ${text}`);
++  }
++
++  /* ---------------- tabs ---------------- */
++  function setTab(root, key) {
++    if (!root) return;
++    $$('[data-tab-btn]', root).forEach((b) => {
++      const on = b.dataset.tabBtn === key;
++      b.classList.toggle('active', on);
++      b.setAttribute('aria-selected', String(on));
++    });
++    $$('[data-panel]', root).forEach((p) => { p.hidden = p.dataset.panel !== key; });
++  }
++  $$('[data-tabs]').forEach((root) =>
++    $$('[data-tab-btn]', root).forEach((b) => b.addEventListener('click', () => {
++      setTab(root, b.dataset.tabBtn);
++      if (root.closest('#m-treks')) syncReserveTrek();
++    }))
++  );
++
++  /* ---------------- modals ---------------- */
++  let openM = null, lastFocus = null;
++  const hooks = {
++    treks(o) {
++      if (o.tab) setTab($('#m-treks [data-tabs]'), o.tab);
++      syncReserveTrek();
++      loadTrekSeats();
++    },
++    craft() { go(0); },
++    impact(o) {
++      const root = $('#m-impact [data-tabs]');
++      setTab(root, o.tab || 'drive');
++      $$('.shelf-book').forEach((b) => b.classList.remove('hl-on'));
++      if (o.book) {
++        const b = $('#book-' + o.book);
++        if (b) {
++          b.classList.add('hl-on');
++          setTimeout(() => b.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 150);
++        }
++      }
++      loadPledges();
++    },
++    cohort() { renderPreview(); loadRecentPasses(); },
++    join(o) {
++      // Always show the form (not a stale success screen) when reopened.
++      $('#joinFormWrap').hidden = false;
++      $('#joinDone').hidden = true;
++      if (o.interest) {
++        const cb = $(`#joinForm input[value="${CSS.escape(o.interest)}"]`);
++        if (cb) cb.checked = true;
++      }
++    },
++  };
++
++  function openModal(name, opts = {}) {
++    const m = $('#m-' + name);
++    if (!m) return;
++    if (openM && openM !== m) closeModal(false);
++    if (!openM) lastFocus = document.activeElement;
++    m.hidden = false;
++    void m.offsetWidth;
++    m.classList.add('open');
++    openM = m;
++    document.body.classList.add('lock');
++    if (hooks[name]) hooks[name](opts);
++    m.querySelector('.m-card').scrollTop = 0;
++    setTimeout(() => { const f = $('.m-close', m); if (f) f.focus({ preventScroll: true }); }, 60);
++  }
++
++  function closeModal(restore = true) {
++    if (!openM) return;
++    const m = openM;
++    m.classList.remove('open');
++    openM = null;
++    setTimeout(() => { if (!m.classList.contains('open')) m.hidden = true; }, 260);
++    document.body.classList.remove('lock');
++    if (restore && lastFocus && typeof lastFocus.focus === 'function') {
++      try { lastFocus.focus({ preventScroll: true }); } catch {}
++    }
++  }
++
++  /* ---------------- global click delegation ---------------- */
++  document.addEventListener('click', (e) => {
++    const c = e.target.closest('[data-copy]');
++    if (c) { e.preventDefault(); copy(c.dataset.copy); return; }
++    const o = e.target.closest('[data-open]');
++    if (o) {
++      e.preventDefault();
++      if (o.id === 'nfcBadge') return; // handled separately
++      openModal(o.dataset.open, { tab: o.dataset.tab, interest: o.dataset.interest, book: o.dataset.book });
++      return;
++    }
++    if (e.target.closest('[data-close]')) { closeModal(); return; }
++    if (openM && e.target === openM) closeModal();
++  });
++
++  /* ---------------- keyboard for custom role=button elements ---------------- */
++  $$('.q, .letter').forEach((el) =>
++    el.addEventListener('keydown', (e) => {
++      if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); el.click(); }
++    })
++  );
++
++  /* ---------------- HI interactions ---------------- */
++  $$('.hi-art .vial').forEach((v) =>
++    v.addEventListener('click', () => {
++      v.classList.remove('tip');
++      void v.offsetWidth;
++      v.classList.add('tip');
++    })
++  );
++  const nfc = $('#nfcBadge');
++  if (nfc) {
++    nfc.addEventListener('click', () => {
++      nfc.classList.remove('tapped');
++      void nfc.offsetWidth;
++      nfc.classList.add('tapped');
++      toast('NFC tap detected. Opening the join form…');
++      setTimeout(() => openModal('join'), 450);
++    });
++  }
++
++  /* ---------------- WORLD letters ---------------- */
++  $$('.letter').forEach((l) =>
++    l.addEventListener('click', () => {
++      l.classList.remove('jump');
++      void l.offsetWidth;
++      l.classList.add('jump');
++      if ($('.tube', l)) l.classList.toggle('slosh');
++      toast(l.dataset.info || 'Explore well.');
++    })
++  );
++
++  /* ---------------- presenter remote ---------------- */
++  const quads = $$('.q');
++  let spotI = -1, spotT;
++  function spot(i) {
++    if (!quads.length) return;
++    spotI = (i + quads.length) % quads.length;
++    $('#pillarGrid').classList.add('presenting');
++    quads.forEach((q, j) => q.classList.toggle('spot', j === spotI));
++    quads[spotI].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
++    toast(`Slide ${spotI + 1} / 4 — ${quads[spotI].dataset.title || ''}`);
++    clearTimeout(spotT);
++    spotT = setTimeout(clearSpot, 6000);
++  }
++  function clearSpot() {
++    const grid = $('#pillarGrid');
++    if (grid) grid.classList.remove('presenting');
++    quads.forEach((q) => q.classList.remove('spot'));
++    spotI = -1;
++  }
++
++  let laserOn = false;
++  const laser = $('#laser');
++  function setLaser(on) {
++    laserOn = on;
++    document.body.classList.toggle('laser-on', on);
++    const btn = $('.r-laser');
++    if (btn) btn.classList.toggle('on', on);
++    toast(on ? 'Laser pointer on. Press Esc or the top button to turn it off.' : 'Laser pointer off');
++  }
++  addEventListener('pointermove', (e) => {
++    if (laserOn) laser.style.transform = `translate(${e.clientX}px,${e.clientY}px)`;
++  }, { passive: true });
++
++  const blackout = $('#blackout');
++  function blank(on) { blackout.classList.toggle('on', on); }
++  blackout.addEventListener('click', () => blank(false));
++
++  $$('[data-remote]').forEach((b) =>
++    b.addEventListener('click', (e) => {
++      e.stopPropagation();
++      e.preventDefault();
++      b.classList.add('press');
++      setTimeout(() => b.classList.remove('press'), 150);
++      switch (b.dataset.remote) {
++        case 'laser': setLaser(!laserOn); break;
++        case 'home': clearSpot(); scrollTo({ top: 0, behavior: 'smooth' }); break;
++        case 'prev': spot(spotI < 0 ? quads.length - 1 : spotI - 1); break;
++        case 'next': spot(spotI + 1); break;
++        case 'screen': openModal('craft'); break;
++        case 'blank': blank(true); break;
++      }
++    })
++  );
++
++  /* ---------------- workshop deck ---------------- */
++  const deck = $('#deck');
++  const slides = deck ? $$('.slide', deck) : [];
++  const dots = $('#deckDots');
++  let di = 0;
++  if (deck && dots) {
++    slides.forEach((_, i) => {
++      const b = document.createElement('button');
++      b.type = 'button';
++      b.setAttribute('aria-label', 'Go to slide ' + (i + 1));
++      b.addEventListener('click', () => go(i));
++      dots.appendChild(b);
++    });
++    $('#deckPrev').addEventListener('click', () => go(di - 1));
++    $('#deckNext').addEventListener('click', () => go(di + 1));
++    $('#deckBlank').addEventListener('click', () => blank(true));
++    let sx = null;
++    deck.addEventListener('pointerdown', (e) => { sx = e.clientX; });
++    deck.addEventListener('pointerup', (e) => {
++      if (sx === null) return;
++      const dx = e.clientX - sx;
++      if (Math.abs(dx) > 40) go(di + (dx < 0 ? 1 : -1));
++      sx = null;
++    });
++    deck.addEventListener('pointercancel', () => { sx = null; });
++    go(0);
++  }
++  function go(i) {
++    if (!slides.length) return;
++    di = Math.max(0, Math.min(slides.length - 1, i));
++    $('.slides', deck).style.transform = `translateX(-${di * 100}%)`;
++    $('#deckCount').textContent = `${di + 1} / ${slides.length}`;
++    $$('button', dots).forEach((b, j) => b.classList.toggle('active', j === di));
++    $('#deckPrev').disabled = di === 0;
++    $('#deckNext').disabled = di === slides.length - 1;
++    $('#deckBar').style.width = ((di + 1) / slides.length) * 100 + '%';
++  }
++
++  /* ---------------- live stats band ---------------- */
++  async function loadStats() {
++    try {
++      const s = await api.get('/api/stats');
++      $('#statBooks').textContent = s.books.pledged;
++      $('#statBooksGoal').textContent = `of ${s.books.goal} goal`;
++      $('#statMembers').textContent = s.passes + s.applications;
++      $('#statSeats').textContent =
++        (s.reservations.alibaba + s.reservations.refinery) + ' reserved';
++    } catch {
++      markOffline();
++      const local = store.get('hw_pledges', []);
++      const total = 347 + local.reduce((a, p) => a + (p.qty || 0), 0);
++      $('#statBooks').textContent = total;
++    }
++  }
++
++  /* ---------------- trek seats + reservations ---------------- */
++  let trekData = [];
++  async function loadTrekSeats() {
++    try {
++      const d = await api.get('/api/treks');
++      trekData = d.treks;
++      for (const t of trekData) {
++        const leftEl = $(`[data-seats-left="${t.id}"]`);
++        const barEl = $(`[data-seats-bar="${t.id}"]`);
++        if (leftEl) leftEl.textContent = t.left <= 0 ? 'Full — waitlist open' : `${t.left} of ${t.seats} seats left`;
++        if (barEl) barEl.style.width = Math.min(100, (t.reserved / t.seats) * 100) + '%';
++        const chip = $(`[data-seats-chip="${t.id}"]`);
++        if (chip) chip.textContent = t.left <= 0 ? 'Waitlist' : `~${t.left} seats`;
++      }
++    } catch {
++      markOffline();
++    }
++  }
++
++  function syncReserveTrek() {
++    const active = $('#m-treks .tab.active');
++    const sel = $('#resTrek');
++    if (active && sel) sel.value = active.dataset.tabBtn === 'refinery' ? 'refinery' : 'alibaba';
++  }
++
++  const resForm = $('#reserveForm');
++  if (resForm) {
++    resForm.addEventListener('submit', async (e) => {
++      e.preventDefault();
++      const btn = resForm.querySelector('[type="submit"]');
++      const name = $('#resName').value.trim();
++      const wc = $('#resWc').value.trim();
++      const trek = $('#resTrek').value;
++      if (!name || !wc) { toast('Please enter your name and WeChat ID.'); return; }
++      btn.classList.add('btn-busy');
++      btn.disabled = true;
++      try {
++        const d = await api.post('/api/reservations', { name, wc, trek });
++        toast(`Reserved! ${d.left} seat${d.left === 1 ? '' : 's'} left on this trek.`);
++        resForm.reset();
++        syncReserveTrek();
++        loadTrekSeats();
++        loadStats();
++      } catch (err) {
++        toast(err.message);
++      } finally {
++        btn.classList.remove('btn-busy');
++        btn.disabled = false;
++      }
++    });
++  }
++
++  /* ---------------- book drive (live API + offline fallback) ---------------- */
++  const BASE = 347, GOAL = 500;
++  const seed = [
++    { name: 'Mia', genre: "Children's picture books", qty: 6 },
++    { name: 'Anonymous', genre: 'STEM & science', qty: 3 },
++    { name: 'Jun', genre: 'English learning', qty: 4 },
++  ];
++
++  function paintMeter(total, animate) {
++    const cnt = $('#bookCount');
++    if (animate) {
++      const from = +cnt.textContent || BASE;
++      const start = performance.now();
++      const step = (t) => {
++        const k = Math.min(1, (t - start) / 700);
++        cnt.textContent = Math.round(from + (total - from) * k);
++        if (k < 1) requestAnimationFrame(step);
++      };
++      requestAnimationFrame(step);
++    } else {
++      cnt.textContent = total;
++    }
++    requestAnimationFrame(() => {
++      $('#bookBar').style.width = Math.min(100, (total / GOAL) * 100) + '%';
++    });
++    $('#bookLeft').textContent = total >= GOAL ? 'Goal reached — thank you!' : `${GOAL - total} to go`;
++  }
++
++  function paintPledges(rows) {
++    const list = $('#pledgeList');
++    list.innerHTML = '';
++    const items = rows.length ? rows : seed;
++    items.slice(0, 8).forEach((p) => {
++      const li = document.createElement('li');
++      const a = document.createElement('span');
++      a.textContent = `${p.name} · ${p.genre}`;
++      const b = document.createElement('span');
++      b.textContent = `${p.qty} book${p.qty > 1 ? 's' : ''}`;
++      li.append(a, b);
++      list.appendChild(li);
++    });
++  }
++
++  async function loadPledges(animate = false) {
++    try {
++      const d = await api.get('/api/pledges?limit=8');
++      paintMeter(d.total, animate);
++      paintPledges(d.pledges.length ? d.pledges : seed);
++    } catch {
++      markOffline();
++      const local = store.get('hw_pledges', []);
++      const total = BASE + local.reduce((a, p) => a + (p.qty || 0), 0);
++      paintMeter(total, animate);
++      paintPledges([...local].reverse().concat(seed));
++    }
++  }
++
++  let qty = 1;
++  const qOut = $('#qOut');
++  $('#qMinus').addEventListener('click', () => { qty = Math.max(1, qty - 1); qOut.textContent = qty; });
++  $('#qPlus').addEventListener('click', () => { qty = Math.min(20, qty + 1); qOut.textContent = qty; });
++
++  $('#pledgeForm').addEventListener('submit', async (e) => {
++    e.preventDefault();
++    const btn = e.target.querySelector('[type="submit"]');
++    const name = $('#plName').value.trim() || 'Anonymous';
++    const genre = $('#plGenre').value;
++    btn.classList.add('btn-busy');
++    btn.disabled = true;
++    try {
++      const d = await api.post('/api/pledges', { name, genre, qty });
++      paintMeter(d.total, true);
++      loadPledges();
++      toast(`Thank you, ${name}! ${qty} book${qty > 1 ? 's' : ''} pledged.`);
++    } catch (err) {
++      // Offline fallback: keep it locally so nothing is lost.
++      const local = store.get('hw_pledges', []);
++      local.push({ name, genre, qty, t: Date.now() });
++      store.set('hw_pledges', local);
++      const total = BASE + local.reduce((a, p) => a + (p.qty || 0), 0);
++      paintMeter(total, true);
++      paintPledges([...local].reverse().concat(seed));
++      toast(api.online ? err.message : `Saved offline. Thank you, ${name}!`);
++      if (!api.online) markOffline();
++    } finally {
++      qty = 1; qOut.textContent = 1;
++      $('#plName').value = '';
++      btn.classList.remove('btn-busy');
++      btn.disabled = false;
++      loadStats();
++    }
++  });
++
++  /* ---------------- cohort pass ---------------- */
++  const pName = $('#passName'), pTrack = $('#passTrack');
++  function renderPreview() {
++    $('#pvName').textContent = pName.value.trim() || 'Your Name';
++    $('#pvTrack').textContent = pTrack.value;
++  }
++  function applyPass(p) {
++    const el = $('#passIssued');
++    if (p) {
++      el.textContent = `ISSUED TO: ${p.name.toUpperCase()} · ${p.track.toUpperCase()}`;
++      el.hidden = false;
++      $('#badgeName').textContent = p.name;
++    } else {
++      el.hidden = true;
++      $('#badgeName').textContent = 'Club Member';
++    }
++  }
++  async function loadRecentPasses() {
++    const box = $('#recentPasses');
++    if (!box) return;
++    try {
++      const d = await api.get('/api/passes/latest?limit=6');
++      box.innerHTML = '';
++      if (!d.passes.length) { box.innerHTML = '<span class="chip">Be the first to get a pass</span>'; return; }
++      d.passes.forEach((p) => {
++        const s = document.createElement('span');
++        s.className = 'chip';
++        s.textContent = `${p.name} · ${p.track}`;
++        box.appendChild(s);
++      });
++    } catch {
++      box.innerHTML = '';
++    }
++  }
++  if (pName) {
++    pName.addEventListener('input', () => { renderPreview(); $('#pnField').classList.remove('err'); });
++    pTrack.addEventListener('change', renderPreview);
++    $('#issuePass').addEventListener('click', async () => {
++      const name = pName.value.trim();
++      if (!name) {
++        const f = $('#pnField');
++        f.classList.add('err');
++        pName.classList.remove('shake');
++        void pName.offsetWidth;
++        pName.classList.add('shake');
++        pName.focus();
++        return;
++      }
++      const btn = $('#issuePass');
++      btn.classList.add('btn-busy');
++      btn.disabled = true;
++      try {
++        const d = await api.post('/api/passes', { name, track: pTrack.value });
++        store.set('hw_pass', d.pass);
++        applyPass(d.pass);
++        loadRecentPasses();
++        loadStats();
++        toast(`Pass issued to ${name}. It's on your lanyard now.`);
++      } catch (err) {
++        if (!api.online || /fetch|network|timeout/i.test(err.message)) {
++          const p = { name, track: pTrack.value };
++          store.set('hw_pass', p);
++          applyPass(p);
++          markOffline();
++          toast(`Pass issued offline to ${name}.`);
++        } else {
++          toast(err.message);
++        }
++      } finally {
++        btn.classList.remove('btn-busy');
++        btn.disabled = false;
++      }
++    });
++    $('#resetPass').addEventListener('click', () => {
++      pName.value = '';
++      pTrack.value = 'All-rounder';
++      renderPreview();
++      store.set('hw_pass', null);
++      applyPass(null);
++      toast('Pass reset');
++    });
++    const savedPass = store.get('hw_pass', null);
++    if (savedPass && savedPass.name) {
++      pName.value = savedPass.name;
++      if ([...pTrack.options].some((o) => o.value === savedPass.track)) pTrack.value = savedPass.track;
++      applyPass({ name: savedPass.name, track: pTrack.value });
++    }
++    renderPreview();
++  }
++
++  /* ---------------- join form (live API + offline queue) ---------------- */
++  const joinForm = $('#joinForm');
++  if (joinForm) {
++    joinForm.addEventListener('submit', async (e) => {
++      e.preventDefault();
++      let ok = true, firstBad = null;
++      ['jName', 'jWc'].forEach((id) => {
++        const el = $('#' + id);
++        const bad = !el.value.trim();
++        el.closest('.field').classList.toggle('err', bad);
++        if (bad) { ok = false; firstBad = firstBad || el; }
++      });
++      if (!ok) { firstBad.focus(); toast('Please fill in the required fields.'); return; }
++      const btn = joinForm.querySelector('[type="submit"]');
++      btn.classList.add('btn-busy');
++      btn.disabled = true;
++      const data = {
++        name: $('#jName').value.trim(),
++        wc: $('#jWc').value.trim(),
++        org: $('#jOrg').value.trim(),
++        interests: $$('#joinForm input[name=interest]:checked').map((i) => i.value),
++        msg: $('#jMsg').value.trim(),
++      };
++      try {
++        const d = await api.post('/api/applications', data);
++        $('#joinDoneName').textContent = d.name || data.name.split(' ')[0];
++        $('#joinFormWrap').hidden = true;
++        $('#joinDone').hidden = false;
++        loadStats();
++      } catch (err) {
++        if (!api.online || /fetch|network|timeout/i.test(err.message)) {
++          const apps = store.get('hw_apps', []);
++          apps.push({ ...data, t: Date.now() });
++          store.set('hw_apps', apps);
++          markOffline();
++          $('#joinDoneName').textContent = data.name.split(' ')[0];
++          $('#joinFormWrap').hidden = true;
++          $('#joinDone').hidden = false;
++          toast('Saved offline — we will sync it when you are back online.');
++        } else {
++          toast(err.message);
++          if (err.message.includes('WeChat')) $('#jWc').closest('.field').classList.add('err');
++          if (err.message.includes('Name')) $('#jName').closest('.field').classList.add('err');
++        }
++      } finally {
++        btn.classList.remove('btn-busy');
++        btn.disabled = false;
++      }
++    });
++    $$('#jName, #jWc').forEach((el) =>
++      el.addEventListener('input', () => el.closest('.field').classList.remove('err'))
++    );
++    $('#joinAgain').addEventListener('click', () => {
++      joinForm.reset();
++      $('#joinDone').hidden = true;
++      $('#joinFormWrap').hidden = false;
++      $('#jName').focus();
++    });
++  }
++
++  /* ---------------- gallery lightbox ---------------- */
++  const lb = $('#lightbox');
++  if (lb) {
++    const lbImg = $('#lbImg'), lbCap = $('#lbCap');
++    let lbLast = null;
++    function openLb(item) {
++      const img = $('img', item);
++      lbLast = document.activeElement;
++      lbImg.src = img.currentSrc || img.src;
++      lbImg.alt = img.alt;
++      lbCap.textContent = item.dataset.caption || img.alt;
++      lb.hidden = false;
++      void lb.offsetWidth;
++      lb.classList.add('open');
++      document.body.classList.add('lock');
++      $('.m-close', lb).focus({ preventScroll: true });
++    }
++    function closeLb() {
++      lb.classList.remove('open');
++      setTimeout(() => { if (!lb.classList.contains('open')) { lb.hidden = true; lbImg.src = ''; } }, 220);
++      if (!openM) document.body.classList.remove('lock');
++      if (lbLast && typeof lbLast.focus === 'function') { try { lbLast.focus({ preventScroll: true }); } catch {} }
++    }
++    $$('.g-item').forEach((g) => {
++      g.addEventListener('click', () => openLb(g));
++      g.addEventListener('keydown', (e) => {
++        if ((e.key === 'Enter' || e.key === ' ') && e.target === g) { e.preventDefault(); openLb(g); }
++      });
++    });
++    lb.addEventListener('click', (e) => { if (e.target === lb || e.target.closest('[data-close-lb]')) closeLb(); });
++    document.addEventListener('keydown', (e) => {
++      if (!lb.hidden && e.key === 'Escape') { e.stopPropagation(); closeLb(); }
++    }, true);
++  }
++
++  /* ---------------- global keyboard ---------------- */
++  document.addEventListener('keydown', (e) => {
++    if (blackout.classList.contains('on')) { e.preventDefault(); blank(false); return; }
++    if (e.key === 'Escape') {
++      if (openM) closeModal();
++      else if (laserOn) setLaser(false);
++      else clearSpot();
++      return;
++    }
++    if (openM && openM.id === 'm-craft' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
++      if (e.key === 'ArrowRight') { e.preventDefault(); go(di + 1); }
++      if (e.key === 'ArrowLeft') { e.preventDefault(); go(di - 1); }
++      if (e.key.toLowerCase() === 'b') { e.preventDefault(); blank(true); }
++    }
++    if (e.key === 'Tab' && openM) {
++      const f = $$(
++        'a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex="-1"])',
++        openM
++      ).filter((el) => el.getClientRects().length > 0);
++      if (!f.length) return;
++      const first = f[0], last = f[f.length - 1];
++      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
++      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
++    }
++  });
++
++  /* ---------------- reveal on scroll ---------------- */
++  const io = new IntersectionObserver(
++    (entries) => entries.forEach((en) => {
++      if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
++    }),
++    { threshold: 0.15 }
++  );
++  $$('.reveal, #pillarGrid').forEach((el) => io.observe(el));
++
++  /* ---------------- hero pointer parallax ---------------- */
++  const poster = $('#top');
++  if (
++    poster &&
++    matchMedia('(pointer:fine)').matches &&
++    !matchMedia('(prefers-reduced-motion: reduce)').matches
++  ) {
++    poster.addEventListener('pointermove', (e) => {
++      const r = poster.getBoundingClientRect();
++      poster.style.setProperty('--px', ((e.clientX - r.left) / r.width - 0.5).toFixed(3));
++      poster.style.setProperty('--py', ((e.clientY - r.top) / r.height - 0.5).toFixed(3));
++      poster.classList.add('parallax');
++    }, { passive: true });
++    poster.addEventListener('pointerleave', () => poster.classList.remove('parallax'));
++  }
++
++  /* ---------------- boot ---------------- */
++  fitAll();
++  setTimeout(fitAll, 300);
++  loadStats();
++  loadPledges();
++  loadTrekSeats();
++  addEventListener('online', () => loadStats());
++})();
+diff --git a/server/db.js b/server/db.js
+new file mode 100644
+index 0000000..c39bb42
+--- /dev/null
++++ b/server/db.js
+@@ -0,0 +1,128 @@
++'use strict';
++
++/**
++ * Zero-dependency JSON file storage (no native builds required).
++ * Keeps the same `stmts` interface the server uses.
++ * File: data/club.json  (override with DB_PATH — .db/.json both fine)
++ */
++
++const fs = require('fs');
++const path = require('path');
++
++// On Vercel (serverless) only /tmp is writable — and it's ephemeral.
++// Set DB_PATH to override. If the disk isn't writable we keep serving
++// from memory rather than crashing.
++const isServerless = !!process.env.VERCEL;
++let DB_PATH =
++  process.env.DB_PATH ||
++  (isServerless ? path.join('/tmp', 'hiworld-club.json') : path.join(__dirname, '..', 'data', 'club.json'));
++if (DB_PATH.endsWith('.db')) DB_PATH += '.json';
++try {
++  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
++} catch {
++  /* read-only filesystem — in-memory mode */
++}
++
++function blank() {
++  return { pledges: [], applications: [], passes: [], reservations: [], seq: 1 };
++}
++
++function load() {
++  try {
++    const raw = fs.readFileSync(DB_PATH, 'utf8');
++    const d = JSON.parse(raw);
++    if (!Array.isArray(d.pledges)) return blank();
++    d.applications = d.applications || [];
++    d.passes = d.passes || [];
++    d.reservations = d.reservations || [];
++    d.seq = d.seq || 1;
++    return d;
++  } catch {
++    return blank();
++  }
++}
++
++let data = load();
++function save() {
++  const tmp = DB_PATH + '.tmp';
++  fs.writeFileSync(tmp, JSON.stringify(data));
++  fs.renameSync(tmp, DB_PATH);
++}
++const now = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
++
++const stmts = {
++  insertPledge: {
++    run: ({ name, genre, qty }) => {
++      const row = { id: data.seq++, name, genre, qty, created_at: now() };
++      data.pledges.push(row);
++      save();
++      return { lastInsertRowid: row.id };
++    },
++  },
++  listPledges: {
++    all: ({ limit }) => [...data.pledges].reverse().slice(0, limit),
++  },
++  sumPledges: {
++    get: () => ({ sum: data.pledges.reduce((a, p) => a + (p.qty || 0), 0) }),
++  },
++  countPledges: {
++    get: () => ({ n: data.pledges.length }),
++  },
++
++  insertApplication: {
++    run: ({ name, wc, org, interests, msg }) => {
++      const row = { id: data.seq++, name, wc, org, interests, msg, created_at: now() };
++      data.applications.push(row);
++      save();
++      return { lastInsertRowid: row.id };
++    },
++  },
++  listApplications: {
++    all: ({ limit, offset }) => [...data.applications].reverse().slice(offset, offset + limit),
++  },
++  countApplications: {
++    get: () => ({ n: data.applications.length }),
++  },
++
++  insertPass: {
++    run: ({ name, track }) => {
++      const row = { id: data.seq++, name, track, created_at: now() };
++      data.passes.push(row);
++      save();
++      return { lastInsertRowid: row.id };
++    },
++  },
++  latestPasses: {
++    all: ({ limit }) => [...data.passes].reverse().slice(0, limit),
++  },
++  countPasses: {
++    get: () => ({ n: data.passes.length }),
++  },
++
++  insertReservation: {
++    run: ({ name, wc, trek }) => {
++      if (data.reservations.some((r) => r.wc === wc && r.trek === trek)) {
++        throw new Error('UNIQUE constraint failed: reservations.wc, reservations.trek');
++      }
++      const row = { id: data.seq++, name, wc, trek, created_at: now() };
++      data.reservations.push(row);
++      save();
++      return { lastInsertRowid: row.id };
++    },
++  },
++  countByTrek: {
++    all: () => {
++      const m = {};
++      for (const r of data.reservations) m[r.trek] = (m[r.trek] || 0) + 1;
++      return Object.entries(m).map(([trek, n]) => ({ trek, n }));
++    },
++  },
++  listReservations: {
++    all: ({ limit, offset }) => [...data.reservations].reverse().slice(offset, offset + limit),
++  },
++  countReservations: {
++    get: () => ({ n: data.reservations.length }),
++  },
++};
++
++module.exports = { stmts, DB_PATH };
+diff --git a/server/server.js b/server/server.js
+new file mode 100644
+index 0000000..a7d8f0d
+--- /dev/null
++++ b/server/server.js
+@@ -0,0 +1,249 @@
++'use strict';
++
++/**
++ * Hi World Club backend — Express + zero-dependency JSON file store.
++ * Serves the static site from /public and exposes a JSON API under /api.
++ *
++ * API:
++ *   GET  /api/health
++ *   GET  /api/treks
++ *   GET  /api/stats
++ *   GET  /api/pledges?limit=8
++ *   POST /api/pledges            { name?, genre, qty }
++ *   POST /api/applications       { name*, wc*, org?, interests?[], msg? }
++ *   GET  /api/applications       (admin: header x-admin-token or ?token=)
++ *   POST /api/passes             { name*, track }
++ *   GET  /api/passes/latest?limit=5
++ *   POST /api/reservations       { name*, wc*, trek: alibaba|refinery }
++ *   GET  /api/reservations/counts
++ */
++
++const path = require('path');
++const express = require('express');
++const helmet = require('helmet');
++const cors = require('cors');
++const morgan = require('morgan');
++const rateLimit = require('express-rate-limit');
++const { stmts } = require('./db');
++
++const app = express();
++const PORT = Number(process.env.PORT) || 3000;
++const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'hiworld-admin';
++const BASE_BOOKS = 347;
++const BOOK_GOAL = 500;
++
++const GENRES = new Set([
++  "Children's picture books",
++  'Middle-grade fiction',
++  'STEM & science',
++  'English learning',
++  'Classics',
++]);
++const TRACKS = new Set(['All-rounder', 'Treks', 'Craft', 'Impact']);
++const INTERESTS = new Set(['treks', 'workshops', 'csr']);
++const TREKS = [
++  {
++    id: 'alibaba',
++    name: 'Alibaba HQ · Hangzhou',
++    days: '1 day',
++    location: 'Hangzhou',
++    themes: 'E-commerce · Cloud · Logistics',
++    seats: 20,
++    image: '/images/trek-alibaba.jpg',
++    alt: 'Modern tech campus buildings on a student guided tour',
++  },
++  {
++    id: 'refinery',
++    name: 'Private Refinery Island',
++    days: '2 days',
++    location: 'Island site · ferry transfer',
++    themes: 'Energy · Operations · Safety',
++    seats: 16,
++    image: '/images/trek-refinery.jpg',
++    alt: 'Island refinery glowing at dusk with a ferry approaching',
++  },
++];
++
++/* ---------------- middleware ---------------- */
++// NOTE: frameguard / CSP disabled so the site can run inside proxied previews & iframes.
++app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false, frameguard: false }));
++app.use(cors());
++app.use(express.json({ limit: '64kb' }));
++app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
++
++const apiLimiter = rateLimit({ windowMs: 60_000, max: 180, standardHeaders: 'draft-8', legacyHeaders: false });
++const writeLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: 'draft-8', legacyHeaders: false });
++app.use('/api/', apiLimiter);
++
++app.use(express.static(path.join(__dirname, '..', 'public'), {
++  maxAge: '1h',
++  etag: true,
++  setHeaders(res, filePath) {
++    // HTML must never cache — always serve the latest brand/content.
++    if (filePath.endsWith('.html')) {
++      res.setHeader('Cache-Control', 'no-store, must-revalidate');
++      res.setHeader('Pragma', 'no-cache');
++    }
++  },
++}));
++
++/* ---------------- helpers ---------------- */
++const clean = (v, max = 120) => String(v ?? '').trim().slice(0, max);
++const isNonEmpty = (v) => clean(v).length > 0;
++
++function reservationCounts() {
++  const rows = stmts.countByTrek.all();
++  const counts = { alibaba: 0, refinery: 0 };
++  for (const r of rows) counts[r.trek] = r.n;
++  return counts;
++}
++
++function pledgeTotal() {
++  return BASE_BOOKS + (stmts.sumPledges.get().sum || 0);
++}
++
++function requireAdmin(req, res, next) {
++  const token = req.get('x-admin-token') || req.query.token;
++  if (token !== ADMIN_TOKEN) return res.status(401).json({ ok: false, error: 'Unauthorized' });
++  next();
++}
++
++/* ---------------- routes ---------------- */
++app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
++
++app.get('/api/treks', (req, res) => {
++  const counts = reservationCounts();
++  res.json({
++    ok: true,
++    treks: TREKS.map((t) => ({
++      ...t,
++      reserved: counts[t.id] || 0,
++      left: Math.max(0, t.seats - (counts[t.id] || 0)),
++    })),
++  });
++});
++
++app.get('/api/stats', (req, res) => {
++  const total = pledgeTotal();
++  res.json({
++    ok: true,
++    books: { pledged: total, goal: BOOK_GOAL, toGo: Math.max(0, BOOK_GOAL - total), base: BASE_BOOKS },
++    applications: stmts.countApplications.get().n,
++    passes: stmts.countPasses.get().n,
++    reservations: reservationCounts(),
++  });
++});
++
++// ---- pledges ----
++app.get('/api/pledges', (req, res) => {
++  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 8));
++  const total = pledgeTotal();
++  res.json({
++    ok: true,
++    total,
++    goal: BOOK_GOAL,
++    toGo: Math.max(0, BOOK_GOAL - total),
++    pledges: stmts.listPledges.all({ limit }),
++  });
++});
++
++app.post('/api/pledges', writeLimiter, (req, res) => {
++  const name = clean(req.body.name, 40) || 'Anonymous';
++  const genre = clean(req.body.genre, 60);
++  const qty = Number(req.body.qty);
++  if (!GENRES.has(genre)) return res.status(400).json({ ok: false, error: 'Unknown book genre.' });
++  if (!Number.isInteger(qty) || qty < 1 || qty > 20)
++    return res.status(400).json({ ok: false, error: 'Quantity must be 1–20.' });
++  const info = stmts.insertPledge.run({ name, genre, qty });
++  const total = pledgeTotal();
++  res.status(201).json({ ok: true, pledge: { id: info.lastInsertRowid, name, genre, qty }, total, goal: BOOK_GOAL });
++});
++
++// ---- applications (join) ----
++app.post('/api/applications', writeLimiter, (req, res) => {
++  const name = clean(req.body.name, 80);
++  const wc = clean(req.body.wc, 60);
++  const org = clean(req.body.org, 120);
++  const msg = clean(req.body.msg, 2000);
++  const interests = Array.isArray(req.body.interests)
++    ? [...new Set(req.body.interests.map((i) => clean(i, 20)).filter((i) => INTERESTS.has(i)))]
++    : [];
++  if (!isNonEmpty(name)) return res.status(400).json({ ok: false, error: 'Name is required.', field: 'name' });
++  if (!isNonEmpty(wc)) return res.status(400).json({ ok: false, error: 'WeChat ID is required.', field: 'wc' });
++  const info = stmts.insertApplication.run({ name, wc, org, interests: JSON.stringify(interests), msg });
++  res.status(201).json({ ok: true, id: info.lastInsertRowid, name: name.split(' ')[0] });
++});
++
++app.get('/api/applications', requireAdmin, (req, res) => {
++  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
++  const offset = Math.max(0, Number(req.query.offset) || 0);
++  const rows = stmts.listApplications.all({ limit, offset }).map((r) => {
++    try { r.interests = JSON.parse(r.interests); } catch { r.interests = []; }
++    return r;
++  });
++  res.json({ ok: true, total: stmts.countApplications.get().n, applications: rows });
++});
++
++// ---- passes ----
++app.post('/api/passes', writeLimiter, (req, res) => {
++  const name = clean(req.body.name, 28);
++  const track = clean(req.body.track, 20);
++  if (!isNonEmpty(name)) return res.status(400).json({ ok: false, error: 'Name is required.' });
++  if (!TRACKS.has(track)) return res.status(400).json({ ok: false, error: 'Unknown track.' });
++  const info = stmts.insertPass.run({ name, track });
++  res.status(201).json({ ok: true, pass: { id: info.lastInsertRowid, name, track } });
++});
++
++app.get('/api/passes/latest', (req, res) => {
++  const limit = Math.min(12, Math.max(1, Number(req.query.limit) || 5));
++  res.json({ ok: true, passes: stmts.latestPasses.all({ limit }) });
++});
++
++// ---- reservations ----
++app.get('/api/reservations/counts', (req, res) => res.json({ ok: true, counts: reservationCounts() }));
++
++app.get('/api/reservations', requireAdmin, (req, res) => {
++  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
++  const offset = Math.max(0, Number(req.query.offset) || 0);
++  res.json({
++    ok: true,
++    total: stmts.countReservations.get().n,
++    reservations: stmts.listReservations.all({ limit, offset }),
++  });
++});
++
++app.post('/api/reservations', writeLimiter, (req, res) => {
++  const name = clean(req.body.name, 80);
++  const wc = clean(req.body.wc, 60);
++  const trek = clean(req.body.trek, 20);
++  if (!isNonEmpty(name)) return res.status(400).json({ ok: false, error: 'Name is required.' });
++  if (!isNonEmpty(wc)) return res.status(400).json({ ok: false, error: 'WeChat ID is required.' });
++  const t = TREKS.find((x) => x.id === trek);
++  if (!t) return res.status(400).json({ ok: false, error: 'Unknown trek.' });
++  const counts = reservationCounts();
++  if (counts[trek] >= t.seats) return res.status(409).json({ ok: false, error: 'This trek is full. You are on the waitlist — we will reach out.' });
++  try {
++    const info = stmts.insertReservation.run({ name, wc, trek });
++    res.status(201).json({ ok: true, id: info.lastInsertRowid, trek, left: t.seats - counts[trek] - 1 });
++  } catch (err) {
++    if (String(err.message).includes('UNIQUE'))
++      return res.status(409).json({ ok: false, error: 'This WeChat ID already reserved a spot on this trek.' });
++    throw err;
++  }
++});
++
++/* ---------------- errors & fallback ---------------- */
++app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Not found' }));
++// eslint-disable-next-line no-unused-vars
++app.use((err, req, res, next) => {
++  console.error(err);
++  if (res.headersSent) return;
++  res.status(err.status || 500).json({ ok: false, error: 'Something went wrong. Please try again.' });
++});
++app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
++
++if (require.main === module) {
++  app.listen(PORT, '0.0.0.0', () => console.log(`Hi World Club running on http://0.0.0.0:${PORT}`));
++}
++
++module.exports = app;
+diff --git a/vercel.json b/vercel.json
+new file mode 100644
+index 0000000..10ecd7a
+--- /dev/null
++++ b/vercel.json
+@@ -0,0 +1,4 @@
++{
++  "$schema": "https://openapi.vercel.sh/vercel.json",
++  "rewrites": [{ "source": "/api/:path*", "destination": "/api/index" }]
++}

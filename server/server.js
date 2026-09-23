@@ -16,6 +16,7 @@
  *   GET  /api/passes/latest?limit=5
  *   POST /api/reservations       { name*, wc*, trek: alibaba|refinery }
  *   GET  /api/reservations/counts
+ *   /api/admin/*                 club desk (see adminRoutes.js)
  */
 
 const path = require('path');
@@ -24,7 +25,8 @@ const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
-const { stmts } = require('./db');
+const { stmts, store } = require('./db');
+const { registerAdmin } = require('./adminRoutes');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -79,8 +81,8 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
   maxAge: '1h',
   etag: true,
   setHeaders(res, filePath) {
-    // HTML must never cache — always serve the latest brand/content.
-    if (filePath.endsWith('.html')) {
+    // HTML and the desk assets must never cache — always serve the latest.
+    if (filePath.endsWith('.html') || filePath.endsWith(`${path.sep}admin.js`) || filePath.endsWith(`${path.sep}admin.css`)) {
       res.setHeader('Cache-Control', 'no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
     }
@@ -109,7 +111,11 @@ function requireAdmin(req, res, next) {
 }
 
 /* ---------------- routes ---------------- */
-app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+app.get('/api/health', (req, res) => res.json({
+  ok: true,
+  time: new Date().toISOString(),
+  adminDefault: ADMIN_TOKEN === 'hiworld-admin',
+}));
 
 app.get('/api/treks', (req, res) => {
   const counts = reservationCounts();
@@ -177,10 +183,10 @@ app.post('/api/applications', writeLimiter, (req, res) => {
 app.get('/api/applications', requireAdmin, (req, res) => {
   const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
   const offset = Math.max(0, Number(req.query.offset) || 0);
-  const rows = stmts.listApplications.all({ limit, offset }).map((r) => {
-    try { r.interests = JSON.parse(r.interests); } catch { r.interests = []; }
-    return r;
-  });
+  const rows = stmts.listApplications.all({ limit, offset }).map((r) => ({
+    ...r,
+    interests: Array.isArray(r.interests) ? [...r.interests] : [],
+  }));
   res.json({ ok: true, total: stmts.countApplications.get().n, applications: rows });
 });
 
@@ -211,15 +217,35 @@ app.post('/api/reservations', writeLimiter, (req, res) => {
   const t = TREKS.find((x) => x.id === trek);
   if (!t) return res.status(400).json({ ok: false, error: 'Unknown trek.' });
   const counts = reservationCounts();
-  if (counts[trek] >= t.seats) return res.status(409).json({ ok: false, error: 'This trek is full. You are on the waitlist — we will reach out.' });
+  const full = (counts[trek] || 0) >= t.seats;
   try {
-    const info = stmts.insertReservation.run({ name, wc, trek });
-    res.status(201).json({ ok: true, id: info.lastInsertRowid, trek, left: t.seats - counts[trek] - 1 });
+    const info = stmts.insertReservation.run({ name, wc, trek, status: full ? 'waitlisted' : 'confirmed' });
+    if (full) {
+      return res.status(201).json({ ok: true, id: info.lastInsertRowid, trek, waitlisted: true, left: 0 });
+    }
+    res.status(201).json({ ok: true, id: info.lastInsertRowid, trek, left: t.seats - (counts[trek] || 0) - 1 });
   } catch (err) {
     if (String(err.message).includes('UNIQUE'))
-      return res.status(409).json({ ok: false, error: 'This WeChat ID already reserved a spot on this trek.' });
+      return res.status(409).json({ ok: false, error: 'This WeChat ID already has a seat or waitlist spot on this trek.' });
     throw err;
   }
+});
+
+/* ---------------- club desk ---------------- */
+registerAdmin(app, {
+  requireAdmin,
+  clean,
+  isNonEmpty,
+  TREKS,
+  GENRES,
+  TRACKS,
+  INTERESTS,
+  BASE_BOOKS,
+  BOOK_GOAL,
+});
+
+app.get(['/admin', '/admin/'], (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'admin.html'));
 });
 
 /* ---------------- errors & fallback ---------------- */

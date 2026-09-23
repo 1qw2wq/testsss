@@ -15,7 +15,7 @@ Refined poster site + real backend. One part industry immersion, one part hard s
   - `GET/POST /api/pledges` — book-drive pledges
   - `POST /api/applications` (+ admin `GET`) — join applications
   - `POST /api/passes`, `GET /api/passes/latest` — cohort visitor passes
-  - `GET/POST /api/reservations` — trek seat reservations with capacity + duplicate guards
+  - `GET/POST /api/reservations` — trek reservations with capacity, waitlisting, and duplicate guards
   - Validation, rate limiting, security headers (preview/iframe-friendly)
 
 ## Run it
@@ -28,7 +28,22 @@ npm run dev      # with --watch reload
 
 Optional env: `PORT=3000`, `DB_PATH=./data/club.json`, `ADMIN_TOKEN=hiworld-admin`.
 
-Admin list: `curl -H 'x-admin-token: hiworld-admin' localhost:3000/api/applications`.
+### Club desk
+
+Open **`/admin`** for the operations desk. It covers applications, the book drive, trek rosters, visitor passes, and the activity log. It uses the same JSON store as the public forms; it is not a separate demo UI.
+
+The local default key is `hiworld-admin`. Set a private `ADMIN_TOKEN` before deployment (for example, `openssl rand -hex 32`). The browser sends it only in the `x-admin-token` request header. Admin endpoints return `401` without a valid key:
+
+```bash
+curl -H 'x-admin-token: hiworld-admin' http://localhost:3000/api/admin/overview
+curl -H 'x-admin-token: hiworld-admin' http://localhost:3000/api/admin/applications
+```
+
+An empty store is populated with realistic sample records so the desk has something to work with on first launch. Set `SEED_DEMO=0` to start empty (also used by the test suite). The sample-data banner has a guarded reset action. The first new public submission or manual record disables sample reset so real records cannot be wiped by that control. `DB_PATH` still controls the JSON file location.
+
+Desk routes include `GET /api/admin/overview`, `/badges`, `/search`, `/activity`, and collection list/detail endpoints under `/applications`, `/pledges`, `/reservations`, and `/passes`. Admin mutations use `POST`, `PATCH`, and `DELETE` on those collections; CSV export is at `/api/admin/export.csv?type=applications` (or another collection). Every route under `/api/admin/*` requires the same token.
+
+Status changes affect live public totals and capacity: cancelled pledges stop counting toward the book goal, revoked passes stop appearing as active, and waitlisted/cancelled reservations do not consume seats. A reservation’s WeChat ID is unique per trek while that reservation is open. Changing a record, adding a private note, or removing it is recorded in the activity log.
 
 ## Deploy on Vercel
 
@@ -39,8 +54,9 @@ Environment variables to set in Vercel → Project → Settings → Environment 
 
 | Variable      | Required? | What to enter |
 | ------------- | --------- | ------------- |
-| `ADMIN_TOKEN` | **Yes** (recommended) | A long random secret, e.g. `openssl rand -hex 32`. Used as `x-admin-token` to list join applications. |
+| `ADMIN_TOKEN` | **Yes** | A long random secret, e.g. `openssl rand -hex 32`. Protects the club desk and application admin API via `x-admin-token`. |
 | `DB_PATH`     | No | Leave unset — the app defaults to `/tmp/hiworld-club.json` on Vercel. |
+| `SEED_DEMO`   | No | Leave unset to seed an empty store with a sample club; set to `0` to start empty. |
 | `PORT`        | No | Vercel injects this itself; not used by serverless functions. |
 | `NODE_ENV`    | No | Vercel sets `production` automatically. |
 
@@ -64,7 +80,8 @@ Environment variables to set in Vercel → Project → Settings → Environment 
 ```
 public/
   index.html  css/styles.css  js/app.js  images/*.jpg
+  admin.html  css/admin.css  js/admin.js
 server/
-  server.js  db.js
+  server.js  db.js  adminRoutes.js  seed.js  clubdesk.test.js
 data/         # json store (git-ignored)
 ```

@@ -294,6 +294,7 @@ img{max-width:100%;display:block}
 .site-foot .brand{color:#fff}
 .site-foot .brand-mark::before{background:#000}
 .foot-mid{font:400 14px var(--sans);opacity:.7}
+.foot-mid a{color:#f5a15f;opacity:1}
 .site-foot .btn{border-color:#fff;color:#fff}
 .site-foot .btn-ink{background:#fff;color:var(--ink)}
 

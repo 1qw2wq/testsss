@@ -387,7 +387,9 @@
       btn.disabled = true;
       try {
         const d = await api.post('/api/reservations', { name, wc, trek });
-        toast(`Reserved! ${d.left} seat${d.left === 1 ? '' : 's'} left on this trek.`);
+        toast(d.waitlisted
+          ? 'This trek is full. You are on the waitlist — we will reach out.'
+          : `Reserved! ${d.left} seat${d.left === 1 ? '' : 's'} left on this trek.`);
         resForm.reset();
         syncReserveTrek();
         loadTrekSeats();

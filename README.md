@@ -6,13 +6,13 @@ Refined poster site + real backend. One part industry immersion, one part hard s
 
 - **Frontend** (`public/`) — the original interactive poster, refined and split into `index.html` + `css/styles.css` + `js/app.js`
   - HI (vials + NFC/member lanyards) and WORLD (books, pens, remotes, tubes) compositions
-  - New **Moments** photo gallery with lightbox (6 custom photos in `public/images/`)
+  - **Upcoming events** calendar populated from the club desk, plus the **Moments** photo gallery with lightbox
   - Photos inside every modal (treks, workshop, book drive, cohort)
   - Live stats band, live trek seat counts, recent passes & pledges, and privacy-safe public club updates
   - Works **offline**: forms fall back to localStorage when the API is unreachable
 - **Backend** (`server/`) — Node.js + Express + zero-dependency JSON file store (file at `data/club.json`, no native builds)
-  - `GET /api/health`, `GET /api/treks`, `GET /api/stats`, `GET /api/public/activity` (generic updates only; no private application details)
-  - `GET/POST /api/pledges` — book-drive pledges
+  - `GET /api/health`, `GET /api/treks`, `GET /api/stats`, `GET /api/events`, `GET /api/public/activity` (generic updates only; no private application details)
+  - `GET/POST /api/pledges` — book-drive pledges; the goal is configurable from the admin desk and persisted in the JSON store
   - `POST /api/applications` (+ admin `GET`) — join applications
   - `POST /api/passes`, `GET /api/passes/latest` — cohort visitor passes
   - `GET/POST /api/reservations` — trek reservations with capacity, waitlisting, and duplicate guards
@@ -30,7 +30,7 @@ Optional env: `PORT=3000`, `DB_PATH=./data/club.json`, `ADMIN_TOKEN=hiworld-admi
 
 ### Club desk
 
-Open **`/admin`** for the operations desk. It covers applications, the book drive, trek rosters, visitor passes, and the activity log. It uses the same JSON store as the public forms; it is not a separate demo UI.
+Open **`/admin`** for the operations desk. It covers applications, the book drive, events, trek rosters, visitor passes, and the activity log. Admins can adjust the book goal and create, edit, or delete events; upcoming events appear on the public homepage. It uses the same JSON store as the public forms; it is not a separate demo UI.
 
 The local default key is `hiworld-admin`. Set a private `ADMIN_TOKEN` before deployment (for example, `openssl rand -hex 32`). The browser sends it only in the `x-admin-token` request header. Admin endpoints return `401` without a valid key:
 
@@ -39,9 +39,9 @@ curl -H 'x-admin-token: hiworld-admin' http://localhost:3000/api/admin/overview
 curl -H 'x-admin-token: hiworld-admin' http://localhost:3000/api/admin/applications
 ```
 
-An empty store is populated with realistic sample records so the desk has something to work with on first launch. Set `SEED_DEMO=0` to start empty (also used by the test suite). The sample-data banner has a guarded reset action. The first new public submission or manual record disables sample reset so real records cannot be wiped by that control. The sidebar’s **Clear all data** action requires typing `CLEAR ALL DATA`; it deletes all four record collections and the activity log. The fixed 347-book historical baseline is not a saved pledge, so it remains in public totals. A persisted marker prevents an empty store from being automatically reseeded with demo records on the next start, as long as the configured JSON file remains available. `DB_PATH` controls the JSON file location.
+An empty store is populated with realistic sample records so the desk has something to work with on first launch. Set `SEED_DEMO=0` to start empty (also used by the test suite). The sample-data banner has a guarded reset action. The first new public submission or manual record disables sample reset so real records cannot be wiped by that control. The sidebar’s **Clear all data** action requires typing `CLEAR ALL DATA`; it deletes all five record collections and the activity log while preserving club configuration. The default book goal is 500 and can be changed from the Book drive page; the goal is saved in the JSON store. The fixed 347-book historical baseline is not a saved pledge, so it remains separate from saved desk records in public totals. A persisted marker prevents an empty store from being automatically reseeded with demo records on the next start, as long as the configured JSON file remains available. `DB_PATH` controls the JSON file location.
 
-Desk routes include `GET /api/admin/overview`, `/badges`, `/search`, `/activity`, and collection list/detail endpoints under `/applications`, `/pledges`, `/reservations`, and `/passes`. Admin mutations use `POST`, `PATCH`, and `DELETE` on those collections; CSV export is at `/api/admin/export.csv?type=applications` (or another collection). Every route under `/api/admin/*` requires the same token.
+Desk routes include `GET /api/admin/overview`, `/badges`, `/search`, `/activity`, and collection list/detail endpoints under `/applications`, `/pledges`, `/reservations`, and `/passes`. `PATCH /api/admin/book-goal` updates the persisted target; `/api/admin/events` supports authenticated event listing and `POST`/`PATCH`/`DELETE` management. CSV export is at `/api/admin/export.csv?type=applications` (or another record collection). Every route under `/api/admin/*` requires the same token.
 
 Status changes affect live public totals and capacity: cancelled pledges stop counting toward the book goal, revoked passes stop appearing as active, and waitlisted/cancelled reservations do not consume seats. A reservation’s WeChat ID is unique per trek while that reservation is open. Changing a record, adding a private note, or removing it is recorded in the activity log. The public homepage polls for live changes; its update feed uses generic messages and never publishes names, WeChat IDs, private notes, or internal activity summaries.
 
@@ -61,8 +61,9 @@ Environment variables to set in Vercel → Project → Settings → Environment 
 | `NODE_ENV`    | No | Vercel sets `production` automatically. |
 
 > ⚠️ **Persistence note:** Vercel's serverless filesystem is ephemeral — pledges,
-> applications, passes, and reservations reset on redeploys/cold starts. For
-> permanent storage, either host the backend on Render/Railway/Fly/your own VPS
+> applications, passes, reservations, events, and the configured book goal can reset
+> on redeploys/cold starts. For permanent storage, host the backend on
+> Render/Railway/Fly/your own VPS
 > (where `data/club.json` persists), or swap `server/db.js` for Vercel Postgres/KV.
 
 ## Bug fixes vs the original single-file HTML

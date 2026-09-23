@@ -68,7 +68,8 @@ function trendDays(count) {
 }
 
 function buildOverview(snap, ctx) {
-  const { TREKS, BASE_BOOKS, BOOK_GOAL, GENRES, INTERESTS, TRACKS } = ctx;
+  const { TREKS, BASE_BOOKS, GENRES, INTERESTS, TRACKS } = ctx;
+  const BOOK_GOAL = store.bookGoal();
   const { applications, pledges, passes, reservations, activity } = snap;
   const livePledges = pledges.filter((p) => p.status !== 'cancelled');
   const siteQty = livePledges.reduce((sum, p) => sum + (Number(p.qty) || 0), 0);
@@ -150,7 +151,7 @@ function buildOverview(snap, ctx) {
     const qty = oldPledges.reduce((sum, p) => sum + (Number(p.qty) || 0), 0);
     attention.push({ tone: 'info', title: `${qty} book${qty === 1 ? '' : 's'} pledged over 10 days ago`, detail: oldPledges.map((p) => `${p.name} · ${p.qty}`).join(' · '), href: '#/pledges?status=pledged' });
   }
-  attention.push({ tone: 'ok', title: totalBooks >= BOOK_GOAL ? 'Book-drive goal reached' : `${Math.max(0, BOOK_GOAL - totalBooks)} books to the goal`, detail: `${totalBooks} toward ${BOOK_GOAL} · ${BASE_BOOKS} historical + ${siteQty} on this desk`, href: '#/pledges' });
+  attention.push({ tone: 'ok', title: totalBooks >= BOOK_GOAL ? 'Book-drive goal reached' : `${Math.max(0, BOOK_GOAL - totalBooks)} books to the goal`, detail: `${totalBooks} toward ${BOOK_GOAL} · ${BASE_BOOKS} historical (not saved) + ${siteQty} saved desk pledges`, href: '#/pledges' });
 
   const recent = [...activity].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || b.id - a.id).slice(0, 8);
   const activeReservations = reservations.filter((r) => TAKES_SEAT.has(r.status)).length;
@@ -233,8 +234,8 @@ function activityFor(collection, row, previous, patch) {
 }
 
 function registerAdmin(app, ctx) {
-  const { requireAdmin, clean, isNonEmpty, TREKS, GENRES, TRACKS, INTERESTS, BASE_BOOKS, BOOK_GOAL } = ctx;
-  const overviewCtx = { TREKS, GENRES, TRACKS, INTERESTS, BASE_BOOKS, BOOK_GOAL };
+  const { requireAdmin, clean, isNonEmpty, TREKS, GENRES, TRACKS, INTERESTS, BASE_BOOKS } = ctx;
+  const overviewCtx = { TREKS, GENRES, TRACKS, INTERESTS, BASE_BOOKS };
   const notFound = (res) => res.status(404).json({ ok: false, error: 'Not found' });
   const rowFor = (collection, id) => store.snapshot()[collection].find((row) => row.id === Number(id));
 
@@ -243,6 +244,68 @@ function registerAdmin(app, ctx) {
     res.json({ ok: true, demo: data.demo, newApplications: data.kpis.applications.new, openApplications: data.kpis.applications.open, attention: data.attention.filter((item) => item.tone === 'hot' || item.tone === 'warn').length, waitlisted: data.kpis.reservations.waitlisted });
   });
   app.get('/api/admin/overview', requireAdmin, (req, res) => res.json(buildOverview(store.snapshot(), overviewCtx)));
+
+  app.patch('/api/admin/book-goal', requireAdmin, (req, res) => {
+    const goal = Number(req.body.goal);
+    if (!Number.isInteger(goal) || goal < 1 || goal > 100000) {
+      return res.status(400).json({ ok: false, error: 'The goal must be a whole number from 1 to 100,000.' });
+    }
+    store.setBookGoal(goal);
+    res.json({ ok: true, goal });
+  });
+
+  app.get('/api/admin/events', requireAdmin, (req, res) => {
+    const events = store.snapshot().events
+      .sort((a, b) => a.date.localeCompare(b.date) || String(a.time || '').localeCompare(String(b.time || '')) || a.id - b.id);
+    res.json({ ok: true, total: events.length, events });
+  });
+
+  function eventPayload(body, previous = {}) {
+    const input = { ...previous, ...body };
+    const title = clean(input.title, 100);
+    const date = clean(input.date, 10);
+    const time = clean(input.time, 5);
+    const location = clean(input.location, 120);
+    const description = clean(input.description, 600);
+    const url = clean(input.url, 500);
+    if (!isNonEmpty(title)) return { error: 'Event title is required.', field: 'title' };
+    const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? Date.parse(`${date}T00:00:00Z`) : NaN;
+    if (!Number.isFinite(parsedDate) || new Date(parsedDate).toISOString().slice(0, 10) !== date) {
+      return { error: 'Choose a valid event date.', field: 'date' };
+    }
+    if (time && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) return { error: 'Choose a valid event time.', field: 'time' };
+    if (url) {
+      try {
+        if (new URL(url).protocol !== 'https:') throw new Error('protocol');
+      } catch {
+        return { error: 'Event links must be valid HTTPS URLs.', field: 'url' };
+      }
+    }
+    return { title, date, time, location, description, url };
+  }
+
+  app.post('/api/admin/events', requireAdmin, (req, res) => {
+    const payload = eventPayload(req.body);
+    if (payload.error) return res.status(400).json({ ok: false, error: payload.error, field: payload.field });
+    const event = store.insertEvent(payload);
+    res.status(201).json({ ok: true, event });
+  });
+
+  app.patch('/api/admin/events/:id', requireAdmin, (req, res) => {
+    const id = Number(req.params.id);
+    const previous = store.snapshot().events.find((event) => event.id === id);
+    if (!previous) return notFound(res);
+    const payload = eventPayload(req.body, previous);
+    if (payload.error) return res.status(400).json({ ok: false, error: payload.error, field: payload.field });
+    const event = store.updateEvent(id, payload);
+    res.json({ ok: true, event });
+  });
+
+  app.delete('/api/admin/events/:id', requireAdmin, (req, res) => {
+    const event = store.removeEvent(Number(req.params.id));
+    if (!event) return notFound(res);
+    res.json({ ok: true });
+  });
 
   app.get('/api/admin/search', requireAdmin, (req, res) => {
     const q = clean(req.query.q, 80).toLowerCase();
@@ -256,6 +319,11 @@ function registerAdmin(app, ctx) {
     for (const row of snap.pledges) add('pledge', 'pledges', row, `${row.qty} × ${row.genre}`);
     for (const row of snap.passes) add('pass', 'passes', row, row.track);
     for (const row of snap.reservations) add('reservation', 'reservations', row, `${store.trekLabel(row.trek)} · ${row.wc}`);
+    for (const row of snap.events) {
+      if (`${row.title} ${row.location} ${row.description}`.toLowerCase().includes(q)) {
+        results.push({ type: 'event', collection: 'events', id: row.id, title: row.title, subtitle: `${row.date}${row.location ? ` · ${row.location}` : ''}`, href: '#/events' });
+      }
+    }
     res.json({ ok: true, results: results.slice(0, 12) });
   });
 
@@ -268,7 +336,7 @@ function registerAdmin(app, ctx) {
     rows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || b.id - a.id);
     const limit = clamp(req.query.limit, 1, 100, 20);
     const page = clamp(req.query.page, 1, 10000, 1);
-    const facets = { application: 0, pledge: 0, pass: 0, reservation: 0 };
+    const facets = { application: 0, pledge: 0, pass: 0, reservation: 0, event: 0 };
     for (const row of snap.activity) if (facets[row.type] != null) facets[row.type]++;
     res.json({ ok: true, total: rows.length, page, pages: Math.max(1, Math.ceil(rows.length / limit)), limit, facets, items: rows.slice((page - 1) * limit, page * limit) });
   });
@@ -367,7 +435,8 @@ function registerAdmin(app, ctx) {
         const siteQty = active.reduce((sum, p) => sum + (Number(p.qty) || 0), 0);
         const receivedQty = snap.pledges.filter((p) => p.status === 'received').reduce((sum, p) => sum + (Number(p.qty) || 0), 0);
         const openQty = snap.pledges.filter((p) => p.status === 'pledged').reduce((sum, p) => sum + (Number(p.qty) || 0), 0);
-        body.books = { pledged: BASE_BOOKS + siteQty, goal: BOOK_GOAL, toGo: Math.max(0, BOOK_GOAL - BASE_BOOKS - siteQty), base: BASE_BOOKS, siteQty, receivedQty, openQty };
+        const goal = store.bookGoal();
+        body.books = { pledged: BASE_BOOKS + siteQty, goal, toGo: Math.max(0, goal - BASE_BOOKS - siteQty), base: BASE_BOOKS, siteQty, receivedQty, openQty };
       }
       res.json(body);
     });

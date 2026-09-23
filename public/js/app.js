@@ -25,6 +25,7 @@
         const res = await fetch(path, {
           headers: { 'Content-Type': 'application/json' },
           signal: ctrl.signal,
+          cache: 'no-store',
           ...opts,
         });
         const data = await res.json().catch(() => ({}));
@@ -336,16 +337,17 @@
   async function loadStats() {
     try {
       const s = await api.get('/api/stats');
-      $('#statBooks').textContent = s.books.pledged;
-      $('#statBooksGoal').textContent = `of ${s.books.goal} goal`;
+      $('#statBooks').textContent = Number(s.books.pledged).toLocaleString('en-US');
+      $('#statBooksGoal').textContent = `of ${Number(s.books.goal).toLocaleString('en-US')} · includes historical baseline`;
+      paintMeter(s.books.pledged, s.books.goal, false, s.books.base);
       $('#statMembers').textContent = s.passes + s.applications;
       $('#statSeats').textContent =
         (s.reservations.alibaba + s.reservations.refinery) + ' reserved';
     } catch {
       markOffline();
       const local = store.get('hw_pledges', []);
-      const total = 347 + local.reduce((a, p) => a + (p.qty || 0), 0);
-      $('#statBooks').textContent = total;
+      const total = BASE + local.reduce((a, p) => a + (p.qty || 0), 0);
+      $('#statBooks').textContent = total.toLocaleString('en-US');
     }
   }
 
@@ -405,31 +407,40 @@
   }
 
   /* ---------------- book drive (live API + offline fallback) ---------------- */
-  const BASE = 347, GOAL = 500;
+  const BASE = 347, DEFAULT_GOAL = 500;
+  let bookGoal = DEFAULT_GOAL;
   const seed = [
     { name: 'Mia', genre: "Children's picture books", qty: 6 },
     { name: 'Anonymous', genre: 'STEM & science', qty: 3 },
     { name: 'Jun', genre: 'English learning', qty: 4 },
   ];
 
-  function paintMeter(total, animate) {
+  function paintMeter(total, goal = bookGoal, animate = false, base = BASE) {
     const cnt = $('#bookCount');
+    const safeGoal = Number(goal) || DEFAULT_GOAL;
+    const safeBase = Number(base) || BASE;
+    const numericTotal = Number(total) || 0;
+    bookGoal = safeGoal;
+    const pledges = Math.max(0, numericTotal - safeBase);
+    const display = (value) => Math.round(value).toLocaleString('en-US');
     if (animate) {
-      const from = +cnt.textContent || BASE;
+      const from = Number(String(cnt.textContent).replace(/,/g, '')) || safeBase;
       const start = performance.now();
       const step = (t) => {
         const k = Math.min(1, (t - start) / 700);
-        cnt.textContent = Math.round(from + (total - from) * k);
+        cnt.textContent = display(from + (numericTotal - from) * k);
         if (k < 1) requestAnimationFrame(step);
       };
       requestAnimationFrame(step);
     } else {
-      cnt.textContent = total;
+      cnt.textContent = display(numericTotal);
     }
+    $('#bookGoalLabel').textContent = `/ ${display(safeGoal)} books`;
+    $('#bookBreakdown').textContent = `${display(safeBase)} books in the historical baseline + ${display(pledges)} saved desk pledges. Only saved pledges are listed below.`;
     requestAnimationFrame(() => {
-      $('#bookBar').style.width = Math.min(100, (total / GOAL) * 100) + '%';
+      $('#bookBar').style.width = Math.min(100, (numericTotal / safeGoal) * 100) + '%';
     });
-    $('#bookLeft').textContent = total >= GOAL ? 'Goal reached — thank you!' : `${GOAL - total} to go`;
+    $('#bookLeft').textContent = numericTotal >= safeGoal ? 'Goal reached — thank you!' : `${display(Math.max(0, safeGoal - numericTotal))} to go`;
   }
 
   function paintPledges(rows) {
@@ -456,13 +467,13 @@
   async function loadPledges(animate = false) {
     try {
       const d = await api.get('/api/pledges?limit=8');
-      paintMeter(d.total, animate);
+      paintMeter(d.total, d.goal, animate, d.base);
       paintPledges(d.pledges);
     } catch {
       markOffline();
       const local = store.get('hw_pledges', []);
       const total = BASE + local.reduce((a, p) => a + (p.qty || 0), 0);
-      paintMeter(total, animate);
+      paintMeter(total, bookGoal, animate, BASE);
       paintPledges([...local].reverse().concat(seed));
     }
   }
@@ -481,7 +492,7 @@
     btn.disabled = true;
     try {
       const d = await api.post('/api/pledges', { name, genre, qty });
-      paintMeter(d.total, true);
+      paintMeter(d.total, d.goal, true, d.base);
       loadPledges();
       loadPublicActivity();
       toast(`Thank you, ${name}! ${qty} book${qty > 1 ? 's' : ''} pledged.`);
@@ -491,7 +502,7 @@
       local.push({ name, genre, qty, t: Date.now() });
       store.set('hw_pledges', local);
       const total = BASE + local.reduce((a, p) => a + (p.qty || 0), 0);
-      paintMeter(total, true);
+      paintMeter(total, bookGoal, true, BASE);
       paintPledges([...local].reverse().concat(seed));
       toast(api.online ? err.message : `Saved offline. Thank you, ${name}!`);
       if (!api.online) markOffline();
@@ -772,7 +783,7 @@
         const li = document.createElement('li');
         li.className = 'club-pulse-item';
         const dot = document.createElement('i');
-        dot.className = `club-pulse-dot type-${['application', 'pledge', 'pass', 'reservation'].includes(item.type) ? item.type : 'reservation'}`;
+        dot.className = `club-pulse-dot type-${['application', 'pledge', 'pass', 'reservation', 'event'].includes(item.type) ? item.type : 'reservation'}`;
         dot.setAttribute('aria-hidden', 'true');
         const message = document.createElement('span');
         message.textContent = item.message;
@@ -791,6 +802,93 @@
     }
   }
 
+  /* ---------------- public event calendar ---------------- */
+  let publicEventsSignature = null;
+  function eventDateParts(value) {
+    const date = new Date(`${String(value || '')}T12:00:00Z`);
+    if (Number.isNaN(date.getTime())) return { month: 'Date', day: 'TBA', full: value || 'Date to be announced' };
+    return {
+      month: new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' }).format(date).toUpperCase(),
+      day: new Intl.DateTimeFormat('en-US', { day: '2-digit', timeZone: 'UTC' }).format(date),
+      full: new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date),
+    };
+  }
+
+  async function loadPublicEvents() {
+    const grid = $('#publicEvents');
+    if (!grid) return;
+    try {
+      const result = await api.get('/api/events');
+      const events = Array.isArray(result.events) ? result.events : [];
+      const signature = JSON.stringify(events);
+      if (signature === publicEventsSignature) return;
+      publicEventsSignature = signature;
+      grid.replaceChildren();
+      if (!events.length) {
+        const empty = document.createElement('p');
+        empty.className = 'public-events-empty';
+        empty.textContent = 'No upcoming events are on the calendar yet. Check back soon.';
+        grid.appendChild(empty);
+        return;
+      }
+      events.forEach((event) => {
+        const date = eventDateParts(event.date);
+        const card = document.createElement('article');
+        card.className = 'public-event-card';
+        const dateBadge = document.createElement('div');
+        dateBadge.className = 'public-event-date';
+        dateBadge.setAttribute('aria-hidden', 'true');
+        const month = document.createElement('span');
+        month.textContent = date.month;
+        const day = document.createElement('strong');
+        day.textContent = date.day;
+        dateBadge.append(month, day);
+        const content = document.createElement('div');
+        content.className = 'public-event-content';
+        const kicker = document.createElement('p');
+        kicker.className = 'public-event-kicker';
+        kicker.textContent = 'Hi World Club · Upcoming';
+        const title = document.createElement('h3');
+        title.textContent = event.title;
+        const time = document.createElement('p');
+        time.className = 'public-event-time';
+        const when = document.createElement('time');
+        when.dateTime = event.date;
+        when.textContent = date.full;
+        time.appendChild(when);
+        if (event.time) time.append(` · ${event.time} Hangzhou time`);
+        const location = document.createElement('p');
+        location.className = 'public-event-location';
+        location.textContent = event.location || 'Location to be announced';
+        content.append(kicker, title, time, location);
+        if (event.description) {
+          const description = document.createElement('p');
+          description.className = 'public-event-description';
+          description.textContent = event.description;
+          content.appendChild(description);
+        }
+        if (event.url) {
+          const link = document.createElement('a');
+          link.className = 'public-event-link';
+          link.href = event.url;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.textContent = 'Event details ↗';
+          content.appendChild(link);
+        }
+        card.append(dateBadge, content);
+        grid.appendChild(card);
+      });
+    } catch {
+      markOffline();
+      publicEventsSignature = null;
+      const unavailable = document.createElement('p');
+      unavailable.className = 'public-events-empty';
+      unavailable.textContent = 'The event calendar is temporarily unavailable.';
+      grid.replaceChildren(unavailable);
+    }
+  }
+
   function refreshPublicData() {
     if (document.hidden) return;
     loadStats();
@@ -798,6 +896,7 @@
     loadTrekSeats();
     loadRecentPasses();
     loadPublicActivity();
+    loadPublicEvents();
   }
 
   /* ---------------- boot ---------------- */

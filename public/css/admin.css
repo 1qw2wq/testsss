@@ -530,3 +530,34 @@ details.edit summary { cursor: pointer; font-weight: 600; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- book-drive configuration and events ---------- */
+.ring-label em { display: block; margin-top: 2px; font-size: 10px; line-height: 1.2; color: var(--orange-deep); font-style: normal; font-weight: 700; }
+.book-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.book-heading h3 { margin-bottom: 0 !important; }
+.book-breakdown { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 9px; margin: 10px 0 0; font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+.book-breakdown > span:not(.book-plus):not(.book-equals) { display: inline-block; }
+.book-breakdown b { color: var(--ink); }
+.book-breakdown em { color: var(--muted); font-size: 12px; font-style: normal; }
+.book-plus, .book-equals { color: var(--orange-deep); font-weight: 700; }
+.book-note { margin-top: 5px; }
+.sub-inline { color: var(--muted); font-weight: 400; font-size: 12px; }
+.admin-event-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.admin-event-card { display: flex; flex-direction: column; min-width: 0; padding: 18px; background: var(--card); border: 1px solid rgba(16, 23, 53, 0.08); border-radius: 18px; box-shadow: var(--shadow); }
+.admin-event-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 12.5px; }
+.event-state { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+.event-state.upcoming { color: var(--green); background: #e7f5ec; }
+.event-state.past { color: var(--muted); background: #f1eee8; }
+.admin-event-card h3 { margin: 12px 0 6px; font: 600 22px/1.15 var(--serif); overflow-wrap: anywhere; }
+.admin-event-description { margin: 0 0 12px; color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.admin-event-description.muted { color: var(--muted); font-style: italic; }
+.admin-event-location { margin: auto 0 8px; color: var(--ink-2); }
+.admin-event-location b { margin-right: 4px; color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.admin-event-card > a { align-self: flex-start; margin-top: 2px; }
+.admin-event-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 14px; margin-top: 12px; border-top: 1px solid var(--line); }
+@media (max-width: 680px) {
+  .admin-event-grid { grid-template-columns: 1fr; }
+  .book-heading { align-items: flex-start; }
+  .book-heading .btn { flex: none; }
+  .book-breakdown { align-items: flex-start; }
+}

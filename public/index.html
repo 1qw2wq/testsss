@@ -27,6 +27,7 @@
 <header class="nav" id="nav">
   <a href="#top" class="brand" aria-label="Hi World Club home"><span class="brand-mark" aria-hidden="true"></span>Hi World Club</a>
   <nav class="nav-links" id="navLinks" aria-label="Primary">
+    <a href="#events">Events</a>
     <a href="#moments">Moments</a>
     <a href="#pillars">Pillars</a>
     <a href="#" data-open="treks">Treks</a>
@@ -159,7 +160,7 @@
 
   <div class="stats-band reveal" aria-live="polite" aria-label="Live club stats">
     <span class="stat-chip status" id="netChip"><span class="dot" aria-hidden="true"></span><span>Live from the club server</span></span>
-    <span class="stat-chip card"><b id="statBooks" class="stat-hl">…</b><span>books pledged <em id="statBooksGoal">of 500 goal</em></span></span>
+    <span class="stat-chip card"><b id="statBooks" class="stat-hl">…</b><span>books toward goal <em id="statBooksGoal">of club goal · includes historical baseline</em></span></span>
     <span class="stat-chip card"><b id="statMembers">…</b><span>members &amp; applicants</span></span>
     <span class="stat-chip card"><b aria-hidden="true">🎟</b><span id="statSeats">trek seats</span></span>
   </div>
@@ -171,7 +172,21 @@
     </ul>
   </section>
 
-  <a href="#moments" class="scroll-cue" aria-label="Scroll to moments"></a>
+  <a href="#events" class="scroll-cue" aria-label="Scroll to upcoming events"></a>
+</section>
+
+<!-- ============ UPCOMING EVENTS ============ -->
+<section class="events-section" id="events" aria-labelledby="eventsTitle">
+  <div class="events-inner">
+    <p class="events-eyebrow">Calendar · Get together</p>
+    <div class="events-heading">
+      <div><h2 id="eventsTitle">Upcoming events</h2><p>Meet, make, and explore with Hi World Club. New gatherings are posted here.</p></div>
+      <span class="events-live"><i aria-hidden="true"></i> Club calendar</span>
+    </div>
+    <div class="public-event-grid" id="publicEvents" aria-live="polite" aria-relevant="additions text">
+      <p class="public-events-empty">Loading upcoming events…</p>
+    </div>
+  </div>
 </section>
 
 <!-- ============ MOMENTS / GALLERY ============ -->
@@ -437,10 +452,11 @@ Cohort</h2>
         </figure>
         <div class="meter m-sec">
           <div class="meter-top">
-            <div class="meter-num"><span id="bookCount">0</span><small>/ 500 books</small></div>
+            <div class="meter-num"><span id="bookCount">347</span><small id="bookGoalLabel">/ club goal</small></div>
             <span class="chip" id="bookLeft">—</span>
           </div>
           <div class="track"><i id="bookBar"></i></div>
+          <p class="book-breakdown-public" id="bookBreakdown">347 books in the historical baseline + 0 saved desk pledges. Only saved pledges are listed below.</p>
         </div>
         <form id="pledgeForm" class="m-sec" novalidate>
           <div class="form-grid">

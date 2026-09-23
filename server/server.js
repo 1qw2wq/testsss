@@ -33,7 +33,6 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'hiworld-admin';
 const BASE_BOOKS = 347;
-const BOOK_GOAL = 500;
 
 const GENRES = new Set([
   "Children's picture books",
@@ -134,9 +133,10 @@ app.get('/api/treks', (req, res) => {
 
 app.get('/api/stats', (req, res) => {
   const total = pledgeTotal();
+  const goal = store.bookGoal();
   res.json({
     ok: true,
-    books: { pledged: total, goal: BOOK_GOAL, toGo: Math.max(0, BOOK_GOAL - total), base: BASE_BOOKS },
+    books: { pledged: total, goal, toGo: Math.max(0, goal - total), base: BASE_BOOKS },
     applications: stmts.countApplications.get().n,
     passes: stmts.countPasses.get().n,
     reservations: reservationCounts(),
@@ -147,26 +147,29 @@ app.get('/api/stats', (req, res) => {
 // names, WeChat IDs, notes, and internal activity summaries never leave here.
 function publicActivityMessage(event) {
   if (event.action === 'deleted') {
-    return event.type === 'application' ? 'A club application was removed.'
-      : event.type === 'pledge' ? 'A book-drive pledge was removed.'
-        : event.type === 'pass' ? 'A visitor pass was removed.'
-          : 'A trek roster entry was removed.';
+    return event.type === 'event' ? 'A club event was removed.'
+      : event.type === 'application' ? 'A club application was removed.'
+        : event.type === 'pledge' ? 'A book-drive pledge was removed.'
+          : event.type === 'pass' ? 'A visitor pass was removed.'
+            : 'A trek roster entry was removed.';
   }
   if (event.action === 'created') {
-    return event.type === 'application' ? 'A new club application was received.'
-      : event.type === 'pledge' ? 'New books were pledged to the drive.'
-        : event.type === 'pass' ? 'A visitor pass was issued.'
-          : 'A trek reservation was added.';
+    return event.type === 'event' ? 'A new club event was announced.'
+      : event.type === 'application' ? 'A new club application was received.'
+        : event.type === 'pledge' ? 'New books were pledged to the drive.'
+          : event.type === 'pass' ? 'A visitor pass was issued.'
+            : 'A trek reservation was added.';
   }
-  return event.type === 'application' ? 'Club application review was updated.'
-    : event.type === 'pledge' ? 'The book drive was updated.'
-      : event.type === 'pass' ? 'The visitor roster was updated.'
-        : 'The trek roster was updated.';
+  return event.type === 'event' ? 'A club event was updated.'
+    : event.type === 'application' ? 'Club application review was updated.'
+      : event.type === 'pledge' ? 'The book drive was updated.'
+        : event.type === 'pass' ? 'The visitor roster was updated.'
+          : 'The trek roster was updated.';
 }
 
 app.get('/api/public/activity', (req, res) => {
   const limit = Math.min(8, Math.max(1, Number(req.query.limit) || 5));
-  const visible = new Set(['application', 'pledge', 'pass', 'reservation']);
+  const visible = new Set(['application', 'pledge', 'pass', 'reservation', 'event']);
   const activity = store.snapshot().activity
     .filter((event) => visible.has(event.type))
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || b.id - a.id)
@@ -183,11 +186,13 @@ app.get('/api/public/activity', (req, res) => {
 app.get('/api/pledges', (req, res) => {
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 8));
   const total = pledgeTotal();
+  const goal = store.bookGoal();
   res.json({
     ok: true,
     total,
-    goal: BOOK_GOAL,
-    toGo: Math.max(0, BOOK_GOAL - total),
+    goal,
+    base: BASE_BOOKS,
+    toGo: Math.max(0, goal - total),
     pledges: stmts.listPledges.all({ limit }),
   });
 });
@@ -201,7 +206,25 @@ app.post('/api/pledges', writeLimiter, (req, res) => {
     return res.status(400).json({ ok: false, error: 'Quantity must be 1–20.' });
   const info = stmts.insertPledge.run({ name, genre, qty });
   const total = pledgeTotal();
-  res.status(201).json({ ok: true, pledge: { id: info.lastInsertRowid, name, genre, qty }, total, goal: BOOK_GOAL });
+  res.status(201).json({ ok: true, pledge: { id: info.lastInsertRowid, name, genre, qty }, total, goal: store.bookGoal(), base: BASE_BOOKS });
+});
+
+function clubToday() {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+// Public event cards expose only fields intentionally entered for publication.
+app.get('/api/events', (req, res) => {
+  const events = store.snapshot().events
+    .filter((event) => String(event.date || '') >= clubToday())
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.time || '').localeCompare(String(b.time || '')) || a.id - b.id)
+    .slice(0, 12)
+    .map(({ id, title, date, time, location, description, url }) => ({ id, title, date, time, location, description, url }));
+  res.json({ ok: true, events });
 });
 
 // ---- applications (join) ----
@@ -280,7 +303,6 @@ registerAdmin(app, {
   TRACKS,
   INTERESTS,
   BASE_BOOKS,
-  BOOK_GOAL,
 });
 
 app.get(['/admin', '/admin/'], (req, res) => {

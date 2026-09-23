@@ -33,10 +33,12 @@
   };
 
   const COLLECTIONS = ['applications', 'pledges', 'reservations', 'passes'];
+  const EVENTS_URL = '/api/admin/events';
   const ROUTES = {
     overview: { title: 'Overview', crumb: 'Desk' },
     applications: { title: 'Applications', crumb: 'People' },
     pledges: { title: 'Book drive', crumb: 'Impact' },
+    events: { title: 'Events', crumb: 'Community' },
     treks: { title: 'Trek roster', crumb: 'Fieldwork' },
     passes: { title: 'Visitor passes', crumb: 'Cohort' },
     activity: { title: 'Activity', crumb: 'Desk' },
@@ -71,6 +73,7 @@
     searchIndex: -1,
     searchResults: [],
     renderedRoute: null,
+    eventRows: [],
     restoreFocus: null,
     loading: false,
   };
@@ -192,7 +195,7 @@
     if (state.pollTimer) clearInterval(state.pollTimer);
     state.pollTimer = setInterval(() => {
       updateBadges().catch(() => {});
-      if (cleanHash().view === 'overview' && !document.hidden) renderRoute({ quiet: true });
+      if (['overview', 'events'].includes(cleanHash().view) && !document.hidden) renderRoute({ quiet: true });
     }, 45_000);
   }
 
@@ -357,11 +360,9 @@
     const r = 42;
     const circumference = 2 * Math.PI * r;
     const dash = (pct / 100) * circumference;
-    return `<svg class="donut" style="width:${size}px;height:${size}px" viewBox="0 0 100 100" role="img" aria-label="${nfmt(pledged)} of ${nfmt(goal)} books pledged">
+    return `<svg class="donut" style="width:${size}px;height:${size}px" viewBox="0 0 100 100" role="img" aria-label="${nfmt(pledged)} books toward ${nfmt(goal)}; total includes historical baseline and saved pledges">
       <circle cx="50" cy="50" r="42" fill="none" stroke="#ebe6dc" stroke-width="9" />
       <circle cx="50" cy="50" r="42" fill="none" stroke="#ee6a24" stroke-width="9" stroke-linecap="round" stroke-dasharray="${dash} ${circumference - dash}" transform="rotate(-90 50 50)" />
-      <text class="donut-n" x="50" y="48" text-anchor="middle">${Math.round(pct)}%</text>
-      <text class="donut-s" x="50" y="57" text-anchor="middle">OF GOAL</text>
     </svg>`;
   }
 
@@ -417,7 +418,7 @@
         <div class="page-actions"><button type="button" class="btn btn-sm" data-act="refresh">↻ Refresh desk</button><a class="btn btn-ink btn-sm" href="${routeHref('applications', { status: 'new' })}">Review new <span aria-hidden="true">→</span></a></div>
       </div>
       <section class="kpi-grid" aria-label="Club totals">
-        <a class="kpi" href="${routeHref('pledges')}"><p class="kpi-label">Books pledged</p><p class="kpi-num">${nfmt(b.pledged)}<small>/ ${nfmt(b.goal)}</small></p>${sparkline(data.series.pledges)}<div class="meter"><i style="width:${Math.min(100, (b.pledged / b.goal) * 100)}%"></i></div>${deltaText(b.delta, 'books')}</a>
+        <a class="kpi" href="${routeHref('pledges')}"><p class="kpi-label">Books toward goal</p><p class="kpi-num">${nfmt(b.pledged)}<small>/ ${nfmt(b.goal)}</small></p>${sparkline(data.series.pledges)}<div class="meter"><i style="width:${Math.min(100, (b.pledged / b.goal) * 100)}%"></i></div>${deltaText(b.delta, 'books')}</a>
         <a class="kpi" href="${routeHref('applications', { status: 'new' })}"><p class="kpi-label">Applications waiting</p><p class="kpi-num">${nfmt(a.new)}<small>new</small></p>${sparkline(data.series.applications, '#315b8f')}<p class="kpi-sub">${nfmt(a.reviewing)} in review · ${nfmt(a.accepted)} accepted</p>${deltaText(a.delta, 'applications')}</a>
         <a class="kpi" href="${routeHref('treks')}"><p class="kpi-label">Trek seats used</p><p class="kpi-num">${nfmt(r.active)}<small>/ ${nfmt(r.seats)}</small></p>${sparkline(data.series.reservations, '#42769b')}<p class="kpi-sub">${nfmt(r.seatsLeft)} seats remain · ${nfmt(r.waitlisted)} waitlisted</p><div class="meter"><i style="width:${r.seats ? Math.min(100, (r.active / r.seats) * 100) : 0}%;background:#42769b"></i></div></a>
         <a class="kpi" href="${routeHref('passes')}"><p class="kpi-label">Active visitor passes</p><p class="kpi-num">${nfmt(p.active)}</p>${sparkline(data.series.passes, '#4a9a69')}<p class="kpi-sub">${nfmt(p.byTrack['All-rounder'] || 0)} all-rounders · ${nfmt(p.byTrack.Treks || 0)} trek-focused</p>${deltaText(p.delta, 'passes')}</a>
@@ -430,11 +431,11 @@
           <p class="kpi-sub">Pledges count new pledge records; the book-drive total above counts books.</p>
         </article>
         <article class="card">
-          <div class="card-head"><div><p class="eyebrow">The 500-book goal</p><h3>Every shelf starts somewhere.</h3></div></div>
+          <div class="card-head"><div><p class="eyebrow">The ${nfmt(b.goal)}-book goal</p><h3>Every shelf starts somewhere.</h3></div></div>
           <div class="donut-row">${bookRing(b.pledged, b.goal, 132)}<ul class="legend stack">
             <li><i style="background:#ee6a24"></i><span><b>${nfmt(b.pledged)}</b> total toward ${nfmt(b.goal)}</span></li>
-            <li><i style="background:#101735"></i><span><b>${nfmt(b.base)}</b> historical baseline</span></li>
-            <li><i style="background:#f5a15f"></i><span><b>${nfmt(b.siteQty)}</b> pledged on this desk</span></li>
+            <li><i style="background:#101735"></i><span><b>${nfmt(b.base)}</b> historical baseline · not a saved desk record</span></li>
+            <li><i style="background:#f5a15f"></i><span><b>${nfmt(b.siteQty)}</b> saved desk pledges</span></li>
             <li><i style="background:#4a9a69"></i><span><b>${nfmt(b.receivedQty)}</b> received · ${nfmt(b.openQty)} on the way</span></li>
           </ul></div>
           <div class="meter"><i style="width:${Math.min(100, (b.pledged / b.goal) * 100)}%"></i></div>
@@ -619,10 +620,13 @@
 
   function bookDriveSummary(books) {
     if (!books) return '';
+    const percent = books.goal ? Math.min(100, Math.round((books.pledged / books.goal) * 100)) : 0;
     return `<article class="card books-hero" style="margin-bottom:12px">
-      <div class="ring-wrap">${bookRing(books.pledged, books.goal, 160)}<div class="ring-label"><div><b>${nfmt(books.pledged)}</b><span>of ${nfmt(books.goal)}</span></div></div></div>
-      <div><p class="eyebrow">The collection</p><h3 style="margin:4px 0 2px">A book for the next kid.</h3><p class="kpi-sub">${nfmt(books.base)} historical baseline + ${nfmt(books.siteQty)} pledged on the desk = ${nfmt(books.pledged)} toward ${nfmt(books.goal)}.</p>
-        <div class="stat-pills"><span><b>${nfmt(books.receivedQty)}</b>Received</span><span><b>${nfmt(books.openQty)}</b>Still pledged</span><span><b>${nfmt(books.toGo)}</b>To goal</span></div>
+      <div class="ring-wrap">${bookRing(books.pledged, books.goal, 160)}<div class="ring-label"><div><b>${nfmt(books.pledged)}</b><span>of ${nfmt(books.goal)} books</span><em>${percent}% of goal</em></div></div></div>
+      <div><div class="book-heading"><div><p class="eyebrow">The collection</p><h3 style="margin:4px 0 2px">A book for the next kid.</h3></div><button class="btn btn-sm" type="button" data-act="edit-book-goal" data-goal="${books.goal}">Adjust goal</button></div>
+        <p class="book-breakdown"><span><b>${nfmt(books.base)} books</b> · historical baseline <em>(not a saved desk pledge)</em></span><span class="book-plus" aria-hidden="true">+</span><span><b>${nfmt(books.siteQty)} books</b> · saved desk pledges</span><span class="book-equals" aria-hidden="true">=</span><span><b>${nfmt(books.pledged)} books</b> toward the ${nfmt(books.goal)}-book goal</span></p>
+        <p class="kpi-sub book-note">Only saved pledges appear in the desk records below. The baseline is historical and is shown separately.</p>
+        <div class="stat-pills"><span><b>${nfmt(books.receivedQty)}</b>Received from saved pledges</span><span><b>${nfmt(books.openQty)}</b>Saved, not yet received</span><span><b>${nfmt(books.toGo)}</b>To goal</span></div>
       </div>
     </article>`;
   }
@@ -711,6 +715,48 @@
     return view === 'treks' ? 'reservations' : view;
   }
 
+  function eventDateLabel(value) {
+    const [year, month, day] = String(value || '').split('-').map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (Number.isNaN(date.getTime())) return value || 'Date not set';
+    return new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date);
+  }
+
+  function eventIsUpcoming(value) {
+    const parts = new Intl.DateTimeFormat('en', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const today = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return value >= `${today.year}-${today.month}-${today.day}`;
+  }
+
+  async function renderEvents() {
+    const startedHash = location.hash;
+    try {
+      const data = await api(EVENTS_URL);
+      if (location.hash !== startedHash) return;
+      state.eventRows = data.events || [];
+      const eventCards = (data.events || []).map((event) => {
+        const upcoming = eventIsUpcoming(event.date);
+        return `<article class="admin-event-card">
+          <div class="admin-event-meta"><span class="event-state ${upcoming ? 'upcoming' : 'past'}">${upcoming ? 'Upcoming' : 'Past event'}</span><time datetime="${attr(event.date)}">${esc(eventDateLabel(event.date))}${event.time ? ` · ${esc(event.time)} Hangzhou time` : ''}</time></div>
+          <h3>${esc(event.title)}</h3>
+          ${event.description ? `<p class="admin-event-description">${esc(event.description)}</p>` : '<p class="admin-event-description muted">No description added.</p>'}
+          <p class="admin-event-location"><b>Location</b> ${esc(event.location || 'To be announced')}</p>
+          ${event.url ? `<a class="linkish" href="${attr(event.url)}" target="_blank" rel="noopener noreferrer">Event details ↗</a>` : ''}
+          <div class="admin-event-actions"><button class="btn btn-sm" type="button" data-act="edit-event" data-id="${event.id}">Edit</button><button class="btn btn-sm btn-danger" type="button" data-act="delete-event" data-id="${event.id}">Delete</button></div>
+        </article>`;
+      }).join('');
+      els.view.innerHTML = `<div class="page-head"><div><p class="eyebrow">Club desk · Community</p><h2 class="page-title">Events</h2><p class="kpi-sub">${nfmt(data.total)} event${data.total === 1 ? '' : 's'} managed here. Upcoming events appear on the public club homepage.</p></div><div class="page-actions"><a class="btn btn-sm" href="/#events">View public events ↗</a><button class="btn btn-ink btn-sm" type="button" data-act="add-event">＋ Add event</button></div></div>
+        ${eventCards ? `<div class="admin-event-grid">${eventCards}</div>` : `<div class="empty card"><h3>No events yet.</h3><p>Add an event with a date and it will appear on the club homepage.</p><button class="btn btn-ink btn-sm" type="button" data-act="add-event">＋ Add your first event</button></div>`}`;
+      setLive('live');
+      setAlert('');
+    } catch (err) {
+      if (location.hash !== startedHash) return;
+      setLive('off');
+      setAlert(`Could not load events. ${err.message}`);
+      els.view.innerHTML = `<div class="empty"><h3>Events did not load.</h3><p>${esc(err.message)}</p><button class="btn" type="button" data-act="refresh">Try again</button></div>`;
+    }
+  }
+
   async function renderActivity() {
     const startedHash = location.hash;
     const route = cleanHash();
@@ -726,7 +772,7 @@
         <div class="chips" role="group" aria-label="Filter activity">${types.map(([type, label, count]) => `<button class="chip ${currentType === type ? 'on' : ''}" type="button" data-act="filter" data-key="type" data-value="${attr(type)}">${esc(label)} <b>${nfmt(count)}</b></button>`).join('')}</div>
         <div class="toolbar"><input id="activitySearch" type="search" value="${attr(q)}" placeholder="Search the log…" aria-label="Search activity" /><span class="toolbar-meta">${nfmt(data.total)} events</span></div>
         <div class="table-card"><div class="table-wrap"><table style="min-width:600px"><caption class="sr-only">Club activity</caption><thead><tr><th>Event</th><th>Record</th><th>When</th><th></th></tr></thead><tbody>
-        ${(data.items || []).map((e) => `<tr><td><i class="feed-dot ty-${attr(e.type)}" style="display:inline-block;vertical-align:middle;margin-right:8px"></i>${esc(e.summary)}</td><td>${esc(e.type)}</td><td title="${attr(niceDate(e.created_at, { long: true }))}">${esc(relative(e.created_at))}</td><td class="row-actions">${e.action === 'deleted' ? '<span class="sub">Removed</span>' : `<button type="button" class="linkish" data-act="open" data-type="${e.type === 'reservation' ? 'reservations' : `${e.type}s`}" data-id="${e.ref_id}">Open</button>`}</td></tr>`).join('')}
+        ${(data.items || []).map((e) => `<tr><td><i class="feed-dot ty-${attr(e.type)}" style="display:inline-block;vertical-align:middle;margin-right:8px"></i>${esc(e.summary)}</td><td>${esc(e.type)}</td><td title="${attr(niceDate(e.created_at, { long: true }))}">${esc(relative(e.created_at))}</td><td class="row-actions">${e.action === 'deleted' ? '<span class="sub">Removed</span>' : e.type === 'event' ? '<a class="linkish" href="#/events">Open events</a>' : `<button type="button" class="linkish" data-act="open" data-type="${e.type === 'reservation' ? 'reservations' : `${e.type}s`}" data-id="${e.ref_id}">Open</button>`}</td></tr>`).join('')}
         </tbody></table></div>${data.items.length ? '' : '<div class="empty"><h3>No events found.</h3><p>Change the filter or search again.</p></div>'}</div>${pager(data.total, data.page, data.pages)}`;
       restoreSearchFocus();
       setLive('live');
@@ -749,6 +795,7 @@
     setAlert('');
     if (route.view === 'overview') await renderOverview(!!options.quiet);
     else if (route.view === 'activity') await renderActivity();
+    else if (route.view === 'events') await renderEvents();
     else await renderCollection(collectionForView(route.view));
     if (route.id && !state.detail) {
       const collection = collectionForView(route.view);
@@ -916,6 +963,28 @@
     $('#add-name', els.modalCard)?.focus({ preventScroll: true });
   }
 
+  function eventModal(event = null) {
+    const editing = !!event;
+    els.modalCard.innerHTML = `<p class="eyebrow">Club desk · public listing</p><h2>${editing ? 'Edit event' : 'Add an event'}</h2><p class="dialog-lead">Upcoming events are displayed on the public homepage. Times are shown in Hangzhou time.</p>
+      <form data-form="club-event" data-id="${editing ? event.id : ''}" novalidate><div class="form-grid">
+        <div class="field full"><label for="event-title">Event title *</label><input id="event-title" name="title" maxlength="100" required value="${attr(event?.title || '')}" placeholder="Community book swap" /></div>
+        <div class="field"><label for="event-date">Date *</label><input id="event-date" name="date" type="date" required value="${attr(event?.date || '')}" /></div>
+        <div class="field"><label for="event-time">Start time</label><input id="event-time" name="time" type="time" value="${attr(event?.time || '')}" /><small class="sub">Hangzhou local time (UTC+8)</small></div>
+        <div class="field full"><label for="event-location">Location</label><input id="event-location" name="location" maxlength="120" value="${attr(event?.location || '')}" placeholder="School library · Hangzhou" /></div>
+        <div class="field full"><label for="event-description">Description</label><textarea id="event-description" name="description" maxlength="600" rows="4" placeholder="What should attendees know?">${esc(event?.description || '')}</textarea></div>
+        <div class="field full"><label for="event-url">Event link <span class="sub-inline">(optional, HTTPS)</span></label><input id="event-url" name="url" type="url" maxlength="500" value="${attr(event?.url || '')}" placeholder="https://…" /></div>
+      </div><p class="form-err" data-form-error hidden></p><div class="dialog-actions"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn btn-ink" type="submit">${editing ? 'Save changes' : 'Publish event'}</button></div></form>`;
+    openModal();
+    $('#event-title', els.modalCard)?.focus({ preventScroll: true });
+  }
+
+  function bookGoalModal(goal) {
+    els.modalCard.innerHTML = `<p class="eyebrow">Club desk · book drive</p><h2>Adjust the book goal</h2><p class="dialog-lead">This target is saved with the club settings and updates the progress displays on the desk and public site. The 347-book historical baseline stays separate from saved pledges.</p>
+      <form data-form="book-goal" novalidate><div class="field"><label for="book-goal">Book goal</label><input id="book-goal" name="goal" type="number" min="1" max="100000" step="1" value="${attr(goal)}" required /><small class="sub">Enter a whole number from 1 to 100,000.</small></div><p class="form-err" data-form-error hidden></p><div class="dialog-actions"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn btn-ink" type="submit">Save goal</button></div></form>`;
+    openModal();
+    $('#book-goal', els.modalCard)?.focus({ preventScroll: true });
+  }
+
   function openModal() {
     els.modal.hidden = false;
     requestAnimationFrame(() => { els.modal.classList.add('open'); syncBodyLock(); });
@@ -993,6 +1062,49 @@
       showFormError(form, err.message);
       button.disabled = false;
     }
+  }
+
+  async function submitClubEvent(form) {
+    const payload = formToData(form);
+    const id = form.dataset.id;
+    const button = $('button[type="submit"]', form);
+    button.disabled = true;
+    try {
+      await api(id ? `${EVENTS_URL}/${id}` : EVENTS_URL, { method: id ? 'PATCH' : 'POST', body: payload });
+      closeModal();
+      toast(id ? 'Event updated.' : 'Event published.');
+      await renderEvents();
+      updateBadges().catch(() => {});
+    } catch (err) {
+      showFormError(form, err.message);
+      button.disabled = false;
+    }
+  }
+
+  async function submitBookGoal(form) {
+    const goal = Number(new FormData(form).get('goal'));
+    const button = $('button[type="submit"]', form);
+    button.disabled = true;
+    try {
+      await api('/api/admin/book-goal', { method: 'PATCH', body: { goal } });
+      closeModal();
+      toast('Book goal saved. Public and desk totals are updated.');
+      await renderRoute({ quiet: true });
+    } catch (err) {
+      showFormError(form, err.message);
+      button.disabled = false;
+    }
+  }
+
+  async function deleteClubEvent(id) {
+    const event = state.eventRows?.find((row) => row.id === id);
+    const ok = await askConfirm('Delete this event?', `“${event?.title || 'This event'}” will be removed from the desk and public homepage. Its removal remains in the activity log.`, 'Delete event', true);
+    if (!ok) return;
+    try {
+      await api(`${EVENTS_URL}/${id}`, { method: 'DELETE' });
+      toast('Event deleted.');
+      await renderEvents();
+    } catch (err) { toast(err.message); }
   }
 
   async function submitEdit(form) {
@@ -1134,9 +1246,9 @@
       if (els.search.value.trim() !== q.trim()) return;
       state.searchResults = data.results || [];
       if (!state.searchResults.length) {
-        els.searchPop.innerHTML = '<p class="search-hint">No names, schools, WeChat IDs, or notes found.</p>';
+        els.searchPop.innerHTML = '<p class="search-hint">No names, events, schools, WeChat IDs, or notes found.</p>';
       } else {
-        els.searchPop.innerHTML = state.searchResults.map((r, i) => `<a class="search-hit" role="option" aria-selected="false" href="${attr(r.href)}" data-search-index="${i}"><span class="feed-dot ty-${attr(r.type)}"></span><span><strong>${esc(r.title)}</strong><em>${esc(r.subtitle || '')} · ${esc(r.status || '')}</em></span></a>`).join('');
+        els.searchPop.innerHTML = state.searchResults.map((r, i) => `<a class="search-hit" role="option" aria-selected="false" href="${attr(r.href)}" data-search-index="${i}"><span class="feed-dot ty-${attr(r.type)}"></span><span><strong>${esc(r.title)}</strong><em>${esc(r.subtitle || '')}${r.status ? ` · ${esc(r.status)}` : ''}</em></span></a>`).join('');
       }
       els.searchPop.hidden = false;
     } catch {
@@ -1185,7 +1297,7 @@
   async function clearAllData() {
     const ok = await askConfirm(
       'Clear all club data?',
-      'This permanently deletes every saved application, pledge, visitor pass, trek reservation, and activity-log entry. The fixed 347-book historical baseline is not a saved pledge and will remain in public totals. The desk will stay empty after restart. This cannot be undone.',
+      'This permanently deletes every saved application, pledge, event, visitor pass, trek reservation, and activity-log entry. The historical book baseline and configured book goal are club settings, not saved desk records, so both remain. The desk will stay empty after restart. This cannot be undone.',
       'Clear all data',
       true,
       'CLEAR ALL DATA'
@@ -1200,7 +1312,7 @@
       if (location.hash === '#/overview') await renderRoute({ quiet: true });
       else location.hash = '#/overview';
       updateBadges().catch(() => {});
-      const records = ['applications', 'pledges', 'passes', 'reservations'].reduce((sum, key) => sum + (result.cleared?.[key] || 0), 0);
+      const records = ['applications', 'pledges', 'passes', 'reservations', 'events'].reduce((sum, key) => sum + (result.cleared?.[key] || 0), 0);
       const history = result.cleared?.activity || 0;
       toast(`Cleared ${nfmt(records)} records and ${nfmt(history)} activity events.`);
     } catch (err) { toast(err.message); }
@@ -1233,6 +1345,16 @@
       updateBadges().catch(() => {});
     } else if (action === 'add') {
       addModal(target.dataset.type);
+    } else if (action === 'add-event') {
+      eventModal();
+    } else if (action === 'edit-event') {
+      const id = Number(target.dataset.id);
+      const eventRow = state.eventRows?.find((row) => row.id === id);
+      if (eventRow) eventModal(eventRow);
+    } else if (action === 'delete-event') {
+      await deleteClubEvent(Number(target.dataset.id));
+    } else if (action === 'edit-book-goal') {
+      bookGoalModal(Number(target.dataset.goal));
     } else if (action === 'close-modal') {
       closeModal();
     } else if (action === 'filter') {
@@ -1329,6 +1451,12 @@
     if (form.matches('[data-form="add-record"]')) {
       event.preventDefault();
       await submitAdd(form);
+    } else if (form.matches('[data-form="club-event"]')) {
+      event.preventDefault();
+      await submitClubEvent(form);
+    } else if (form.matches('[data-form="book-goal"]')) {
+      event.preventDefault();
+      await submitBookGoal(form);
     } else if (form.matches('[data-form="edit-record"]')) {
       event.preventDefault();
       await submitEdit(form);

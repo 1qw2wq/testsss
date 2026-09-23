@@ -22,10 +22,12 @@ try {
 }
 
 const COLLECTIONS = ['pledges', 'applications', 'passes', 'reservations'];
+const STORE_COLLECTIONS = [...COLLECTIONS, 'events'];
+const DEFAULT_BOOK_GOAL = 500;
 const TREK_LABELS = { alibaba: 'Alibaba HQ', refinery: 'Refinery Island' };
 
 function blank() {
-  return { pledges: [], applications: [], passes: [], reservations: [], activity: [], seq: 1, meta: {} };
+  return { pledges: [], applications: [], passes: [], reservations: [], events: [], activity: [], seq: 1, meta: { bookGoal: DEFAULT_BOOK_GOAL } };
 }
 
 function trekLabel(id) {
@@ -49,9 +51,12 @@ function load() {
 
 function migrate(d) {
   const next = d && typeof d === 'object' ? d : blank();
-  for (const c of COLLECTIONS) if (!Array.isArray(next[c])) next[c] = [];
+  for (const c of STORE_COLLECTIONS) if (!Array.isArray(next[c])) next[c] = [];
   next.activity = Array.isArray(next.activity) ? next.activity : [];
   next.meta = next.meta && typeof next.meta === 'object' ? next.meta : {};
+  const configuredGoal = Number(next.meta.bookGoal);
+  next.meta.bookGoal = Number.isInteger(configuredGoal) && configuredGoal >= 1 && configuredGoal <= 100000
+    ? configuredGoal : DEFAULT_BOOK_GOAL;
 
   for (const a of next.applications) {
     if (typeof a.interests === 'string') {
@@ -83,7 +88,7 @@ function migrate(d) {
   }
 
   const ids = [];
-  for (const c of [...COLLECTIONS, 'activity']) {
+  for (const c of [...STORE_COLLECTIONS, 'activity']) {
     for (const row of next[c]) if (row && row.id) ids.push(Number(row.id) || 0);
   }
   const maxId = ids.length ? Math.max(...ids) : 0;
@@ -107,11 +112,14 @@ if (JSON.stringify(data) !== loadedJson) {
 
 function isEmpty() {
   // Audit-only stores can occur after deleting the last record; don't reseed over them.
-  return COLLECTIONS.every((c) => data[c].length === 0) && data.activity.length === 0;
+  return STORE_COLLECTIONS.every((c) => data[c].length === 0) && data.activity.length === 0;
 }
 
 if (process.env.SEED_DEMO !== '0' && isEmpty() && !data.meta.suppressDemoSeed) {
+  const configuredGoal = data.meta.bookGoal;
   data = migrate(require('./seed').buildSeed());
+  // Auto-seeding adds sample records; it must not reset club configuration.
+  data.meta.bookGoal = configuredGoal;
   try { save(); } catch (err) { console.error('Seed save failed:', err.message); }
 }
 
@@ -183,22 +191,60 @@ function hasOpenReservation(wc, trek, exceptId) {
 }
 
 function replaceAll(next) {
-  data = migrate(JSON.parse(JSON.stringify(next)));
+  const copy = JSON.parse(JSON.stringify(next));
+  copy.meta = copy.meta && typeof copy.meta === 'object' ? copy.meta : {};
+  // Sample resets replace records, not club configuration.
+  if (copy.meta.bookGoal == null) copy.meta.bookGoal = data.meta.bookGoal;
+  data = migrate(copy);
   save();
   return snapshot();
 }
 
+function bookGoal() {
+  return data.meta.bookGoal || DEFAULT_BOOK_GOAL;
+}
+
+function setBookGoal(goal) {
+  data.meta.bookGoal = goal;
+  save();
+  return bookGoal();
+}
+
+function insertEvent(fields) {
+  return insertRow('events', fields, {
+    type: 'event', action: 'created', summary: `Event announced: ${fields.title}`,
+  });
+}
+
+function updateEvent(id, patch) {
+  const previous = data.events.find((event) => event.id === Number(id));
+  if (!previous) return null;
+  return updateRow('events', id, patch, {
+    type: 'event', action: 'updated', summary: `Event updated: ${patch.title || previous.title}`,
+  });
+}
+
+function removeEvent(id) {
+  const event = data.events.find((item) => item.id === Number(id));
+  if (!event) return null;
+  return removeRow('events', id, {
+    type: 'event', action: 'deleted', summary: `Event removed: ${event.title}`,
+  });
+}
+
 function clearAll() {
-  const counts = Object.fromEntries([...COLLECTIONS, 'activity'].map((collection) => [collection, data[collection].length]));
+  const counts = Object.fromEntries([...STORE_COLLECTIONS, 'activity'].map((collection) => [collection, data[collection].length]));
+  const goal = bookGoal();
   data = {
     pledges: [],
     applications: [],
     passes: [],
     reservations: [],
+    events: [],
     activity: [],
     seq: 1,
-    // Keep an explicitly cleared store empty on future server starts.
-    meta: { suppressDemoSeed: true, cleared_at: now() },
+    // Keep configuration and an explicit empty-store marker across restarts.
+    meta: { bookGoal: goal, suppressDemoSeed: true, cleared_at: now() },
   };
   save();
   return counts;
@@ -303,6 +349,11 @@ const store = {
   snapshot,
   isEmpty,
   isDemo: () => !!data.meta.demo,
+  bookGoal,
+  setBookGoal,
+  insertEvent,
+  updateEvent,
+  removeEvent,
   seatsTaken,
   hasOpenReservation,
   updateRow,

@@ -74,6 +74,30 @@ test('club desk auth, live totals, status actions, and trek capacity', async (t)
       assert.ok(detail.data.activity.some((event) => event.summary.includes('marked declined')));
     });
 
+    await t.test('persists an adjustable book goal for public and admin displays', async () => {
+      const denied = await request(base, '/api/admin/book-goal', { method: 'PATCH', body: { goal: 600 } });
+      assert.equal(denied.response.status, 401);
+      const invalid = await request(base, '/api/admin/book-goal', { method: 'PATCH', admin: true, body: { goal: 2.5 } });
+      assert.equal(invalid.response.status, 400);
+
+      const saved = await request(base, '/api/admin/book-goal', { method: 'PATCH', admin: true, body: { goal: 600 } });
+      assert.equal(saved.response.status, 200);
+      assert.equal(saved.data.goal, 600);
+      const stats = await request(base, '/api/stats');
+      assert.equal(stats.data.books.goal, 600);
+      assert.equal(stats.data.books.base, 347);
+      assert.equal(stats.data.books.toGo, 253);
+      const pledges = await request(base, '/api/pledges');
+      assert.equal(pledges.data.goal, 600);
+      assert.equal(pledges.data.base, 347);
+      const deskPledges = await request(base, '/api/admin/pledges', { admin: true });
+      assert.equal(deskPledges.data.books.goal, 600);
+      assert.equal(deskPledges.data.books.pledged, 347);
+      const overview = await request(base, '/api/admin/overview', { admin: true });
+      assert.equal(overview.data.kpis.books.goal, 600);
+      assert.equal(overview.data.kpis.books.base, 347);
+    });
+
     await t.test('keeps public book totals in sync with admin status', async () => {
       const received = await request(base, '/api/admin/pledges', {
         method: 'POST', admin: true,
@@ -93,6 +117,68 @@ test('club desk auth, live totals, status actions, and trek capacity', async (t)
       const list = await request(base, '/api/admin/pledges?status=received', { admin: true });
       assert.equal(list.data.total, 1);
       assert.equal(list.data.items[0].qty, 2);
+    });
+
+    await t.test('publishes editable public events and keeps an audit trail', async () => {
+      const denied = await request(base, '/api/admin/events');
+      assert.equal(denied.response.status, 401);
+      const invalidDate = await request(base, '/api/admin/events', {
+        method: 'POST', admin: true, body: { title: 'Invalid date', date: '2026-02-31' },
+      });
+      assert.equal(invalidDate.response.status, 400);
+      const invalidLink = await request(base, '/api/admin/events', {
+        method: 'POST', admin: true, body: { title: 'Invalid link', date: '2099-02-16', url: 'javascript:alert(1)' },
+      });
+      assert.equal(invalidLink.response.status, 400);
+
+      const past = await request(base, '/api/admin/events', {
+        method: 'POST', admin: true, body: { title: 'Past club meetup', date: '2000-01-01' },
+      });
+      assert.equal(past.response.status, 201);
+      const created = await request(base, '/api/admin/events', {
+        method: 'POST', admin: true,
+        body: { title: 'Community book swap', date: '2099-02-16', time: '14:30', location: 'School library', description: 'Bring a book to share.', url: 'https://example.org/book-swap' },
+      });
+      assert.equal(created.response.status, 201);
+      const eventId = created.data.event.id;
+      const updated = await request(base, `/api/admin/events/${eventId}`, {
+        method: 'PATCH', admin: true,
+        body: { title: 'Spring book exchange', date: '2099-02-17', description: 'Bring a book and meet the club.' },
+      });
+      assert.equal(updated.response.status, 200);
+      assert.equal(updated.data.event.title, 'Spring book exchange');
+      assert.equal(updated.data.event.time, '14:30');
+      assert.equal(updated.data.event.location, 'School library');
+      assert.equal(updated.data.event.url, 'https://example.org/book-swap');
+
+      const publicList = await request(base, '/api/events');
+      assert.equal(publicList.response.status, 200);
+      assert.equal(publicList.data.events.length, 1);
+      assert.equal(publicList.data.events[0].title, 'Spring book exchange');
+      assert.equal(publicList.data.events[0].location, 'School library');
+      const search = await request(base, '/api/admin/search?q=Spring', { admin: true });
+      assert.ok(search.data.results.some((result) => result.type === 'event' && result.href === '#/events'));
+      assert.equal('created_at' in publicList.data.events[0], false);
+      assert.equal('updated_at' in publicList.data.events[0], false);
+
+      const second = await request(base, '/api/admin/events', {
+        method: 'POST', admin: true,
+        body: { title: 'Club welcome evening', date: '2099-03-01', location: 'Student center' },
+      });
+      assert.equal(second.response.status, 201);
+      const deleted = await request(base, `/api/admin/events/${eventId}`, { method: 'DELETE', admin: true });
+      assert.equal(deleted.response.status, 200);
+      const remaining = await request(base, '/api/events');
+      assert.deepEqual(remaining.data.events.map((event) => event.title), ['Club welcome evening']);
+
+      const feed = await request(base, '/api/public/activity');
+      assert.ok(feed.data.activity.some((event) => event.message === 'A new club event was announced.'));
+      assert.ok(feed.data.activity.some((event) => event.message === 'A club event was updated.'));
+      assert.ok(feed.data.activity.some((event) => event.message === 'A club event was removed.'));
+      assert.equal(JSON.stringify(feed.data).includes('Spring book exchange'), false);
+      const adminLog = await request(base, '/api/admin/activity?type=event', { admin: true });
+      assert.equal(adminLog.data.facets.event, 5);
+      assert.equal(adminLog.data.items.length, 5);
     });
 
     await t.test('waitlists at capacity, prevents duplicate active bookings, and frees cancelled seats', async () => {
@@ -208,9 +294,10 @@ test('club desk auth, live totals, status actions, and trek capacity', async (t)
       assert.ok(cleared.data.cleared.applications >= 1);
       assert.ok(cleared.data.cleared.pledges >= 2);
       assert.ok(cleared.data.cleared.reservations >= 20);
+      assert.ok(cleared.data.cleared.events >= 2);
       assert.ok(cleared.data.cleared.activity >= 20);
 
-      for (const collection of ['applications', 'pledges', 'passes', 'reservations']) {
+      for (const collection of ['applications', 'pledges', 'passes', 'reservations', 'events']) {
         const list = await request(base, `/api/admin/${collection}`, { admin: true });
         assert.equal(list.data.total, 0, `${collection} should be empty after clearing`);
       }
@@ -233,15 +320,40 @@ test('club desk auth, live totals, status actions, and trek capacity', async (t)
       assert.deepEqual(persisted.pledges, []);
       assert.deepEqual(persisted.passes, []);
       assert.deepEqual(persisted.reservations, []);
+      assert.deepEqual(persisted.events, []);
       assert.deepEqual(persisted.activity, []);
+      assert.equal(persisted.meta.bookGoal, 600);
       assert.equal(persisted.meta.suppressDemoSeed, true);
+
+      // The regular first-run demo seed must retain a goal configured before any
+      // record was created, even though the store is otherwise empty.
+      const configuredEmptyPath = `${dbPath}.configured-empty.json`;
+      try {
+        fs.writeFileSync(configuredEmptyPath, JSON.stringify({
+          applications: [], pledges: [], passes: [], reservations: [], events: [],
+          activity: [], seq: 1, meta: { bookGoal: 725 },
+        }));
+        const configuredScript = `const { store } = require(${JSON.stringify(require.resolve('./db'))}); process.stdout.write(JSON.stringify(store.snapshot()));`;
+        const configuredRestart = spawnSync(process.execPath, ['-e', configuredScript], {
+          encoding: 'utf8',
+          env: { ...process.env, DB_PATH: configuredEmptyPath, SEED_DEMO: '1' },
+        });
+        assert.equal(configuredRestart.status, 0, configuredRestart.stderr);
+        const configuredStore = JSON.parse(configuredRestart.stdout);
+        assert.equal(configuredStore.meta.bookGoal, 725);
+        assert.ok(configuredStore.meta.demo);
+        assert.ok(configuredStore.applications.length > 0);
+      } finally {
+        fs.rmSync(configuredEmptyPath, { force: true });
+        fs.rmSync(`${configuredEmptyPath}.tmp`, { force: true });
+      }
 
       // Deleting every record one-by-one leaves audit history; that is not a
       // truly empty store and should not trigger demo seeding either.
       const auditOnlyPath = `${dbPath}.audit-only.json`;
       try {
         fs.writeFileSync(auditOnlyPath, JSON.stringify({
-          applications: [], pledges: [], passes: [], reservations: [],
+          applications: [], pledges: [], passes: [], reservations: [], events: [],
           activity: [{ id: 1, type: 'application', action: 'deleted', summary: 'private', ref_id: 9, created_at: '2026-01-01 00:00:00' }],
           seq: 2, meta: {},
         }));

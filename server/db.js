@@ -9,9 +9,19 @@
 const fs = require('fs');
 const path = require('path');
 
-let DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'club.json');
+// On Vercel (serverless) only /tmp is writable — and it's ephemeral.
+// Set DB_PATH to override. If the disk isn't writable we keep serving
+// from memory rather than crashing.
+const isServerless = !!process.env.VERCEL;
+let DB_PATH =
+  process.env.DB_PATH ||
+  (isServerless ? path.join('/tmp', 'hiworld-club.json') : path.join(__dirname, '..', 'data', 'club.json'));
 if (DB_PATH.endsWith('.db')) DB_PATH += '.json';
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+try {
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+} catch {
+  /* read-only filesystem — in-memory mode */
+}
 
 function blank() {
   return { pledges: [], applications: [], passes: [], reservations: [], seq: 1 };

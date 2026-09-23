@@ -30,6 +30,25 @@ Optional env: `PORT=3000`, `DB_PATH=./data/club.json`, `ADMIN_TOKEN=hiworld-admi
 
 Admin list: `curl -H 'x-admin-token: hiworld-admin' localhost:3000/api/applications`.
 
+## Deploy on Vercel
+
+Import the repo in Vercel — no build step needed (`vercel.json` routes `/api/*`
+to the Express app as a serverless function; `/public` is served by the CDN).
+
+Environment variables to set in Vercel → Project → Settings → Environment Variables:
+
+| Variable      | Required? | What to enter |
+| ------------- | --------- | ------------- |
+| `ADMIN_TOKEN` | **Yes** (recommended) | A long random secret, e.g. `openssl rand -hex 32`. Used as `x-admin-token` to list join applications. |
+| `DB_PATH`     | No | Leave unset — the app defaults to `/tmp/hiworld-club.json` on Vercel. |
+| `PORT`        | No | Vercel injects this itself; not used by serverless functions. |
+| `NODE_ENV`    | No | Vercel sets `production` automatically. |
+
+> ⚠️ **Persistence note:** Vercel's serverless filesystem is ephemeral — pledges,
+> applications, passes, and reservations reset on redeploys/cold starts. For
+> permanent storage, either host the backend on Render/Railway/Fly/your own VPS
+> (where `data/club.json` persists), or swap `server/db.js` for Vercel Postgres/KV.
+
 ## Bug fixes vs the original single-file HTML
 
 - Fixed remote hover `transform: scale(var(--s))` that shrunk the remote (parent is already scaled)

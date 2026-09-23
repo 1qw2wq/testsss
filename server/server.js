@@ -75,7 +75,17 @@ const apiLimiter = rateLimit({ windowMs: 60_000, max: 180, standardHeaders: 'dra
 const writeLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: 'draft-8', legacyHeaders: false });
 app.use('/api/', apiLimiter);
 
-app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: '1h', etag: true }));
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  maxAge: '1h',
+  etag: true,
+  setHeaders(res, filePath) {
+    // HTML must never cache — always serve the latest brand/content.
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+    }
+  },
+}));
 
 /* ---------------- helpers ---------------- */
 const clean = (v, max = 120) => String(v ?? '').trim().slice(0, max);

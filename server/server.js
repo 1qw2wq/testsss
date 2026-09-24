@@ -1,13 +1,14 @@
 'use strict';
 
 /**
- * Hi World Club backend — Express + zero-dependency JSON file store.
+ * Hi World Club backend — Express with PostgreSQL or local JSON persistence.
  * Serves the static site from /public and exposes a JSON API under /api.
  *
  * API:
  *   GET  /api/health
  *   GET  /api/treks
  *   GET  /api/stats
+ *   GET  /api/public/activity  privacy-safe club update feed
  *   GET  /api/pledges?limit=8
  *   POST /api/pledges            { name?, genre, qty }
  *   POST /api/applications       { name*, wc*, org?, interests?[], msg? }
@@ -16,6 +17,7 @@
  *   GET  /api/passes/latest?limit=5
  *   POST /api/reservations       { name*, wc*, trek: alibaba|refinery }
  *   GET  /api/reservations/counts
+ *   /api/admin/*                 club desk (see adminRoutes.js)
  */
 
 const path = require('path');
@@ -24,13 +26,13 @@ const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
-const { stmts } = require('./db');
+const { stmts, store } = require('./db');
+const { registerAdmin } = require('./adminRoutes');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'hiworld-admin';
-const BASE_BOOKS = 347;
-const BOOK_GOAL = 500;
+const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
 const GENRES = new Set([
   "Children's picture books",
@@ -74,13 +76,31 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 const apiLimiter = rateLimit({ windowMs: 60_000, max: 180, standardHeaders: 'draft-8', legacyHeaders: false });
 const writeLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: 'draft-8', legacyHeaders: false });
 app.use('/api/', apiLimiter);
+// Keep health reachable even when DATABASE_URL is misconfigured and store.ready rejects.
+app.get('/api/health', (req, res) => {
+  const storage = store.storageStatus();
+  res.status(storage.ready ? 200 : 503).json({
+    ok: storage.ready,
+    time: new Date().toISOString(),
+    ...storage,
+    serverless: Boolean(process.env.VERCEL),
+    adminDefault: ADMIN_TOKEN === 'hiworld-admin',
+  });
+});
+app.use('/api/', asyncRoute(async (req, res, next) => {
+  await store.ready;
+  await store.refresh();
+  next();
+}));
 
 app.use(express.static(path.join(__dirname, '..', 'public'), {
   maxAge: '1h',
   etag: true,
   setHeaders(res, filePath) {
-    // HTML must never cache — always serve the latest brand/content.
-    if (filePath.endsWith('.html')) {
+    // HTML and interactive app assets must never cache — always serve the latest.
+    const freshAsset = ['admin.js', 'admin.css', 'app.js', 'events.js', 'events.css', 'styles.css']
+      .some((name) => filePath.endsWith(`${path.sep}${name}`));
+    if (filePath.endsWith('.html') || freshAsset) {
       res.setHeader('Cache-Control', 'no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
     }
@@ -99,7 +119,7 @@ function reservationCounts() {
 }
 
 function pledgeTotal() {
-  return BASE_BOOKS + (stmts.sumPledges.get().sum || 0);
+  return store.bookBaseline() + (stmts.sumPledges.get().sum || 0);
 }
 
 function requireAdmin(req, res, next) {
@@ -109,8 +129,6 @@ function requireAdmin(req, res, next) {
 }
 
 /* ---------------- routes ---------------- */
-app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
-
 app.get('/api/treks', (req, res) => {
   const counts = reservationCounts();
   res.json({
@@ -125,42 +143,118 @@ app.get('/api/treks', (req, res) => {
 
 app.get('/api/stats', (req, res) => {
   const total = pledgeTotal();
+  const goal = store.bookGoal();
   res.json({
     ok: true,
-    books: { pledged: total, goal: BOOK_GOAL, toGo: Math.max(0, BOOK_GOAL - total), base: BASE_BOOKS },
+    books: { pledged: total, goal, toGo: Math.max(0, goal - total), base: store.bookBaseline(), epoch: store.bookEpoch() },
     applications: stmts.countApplications.get().n,
     passes: stmts.countPasses.get().n,
     reservations: reservationCounts(),
   });
 });
 
+// Anonymous, privacy-safe feed for the public homepage. Private applications,
+// names, WeChat IDs, notes, and internal activity summaries never leave here.
+function publicActivityMessage(event) {
+  if (event.action === 'deleted') {
+    return event.type === 'event' ? 'A club event was removed.'
+      : event.type === 'application' ? 'A club application was removed.'
+        : event.type === 'pledge' ? 'A book-drive pledge was removed.'
+          : event.type === 'pass' ? 'A visitor pass was removed.'
+            : 'A trek roster entry was removed.';
+  }
+  if (event.action === 'created') {
+    return event.type === 'event' ? 'A new club event was announced.'
+      : event.type === 'application' ? 'A new club application was received.'
+        : event.type === 'pledge' ? 'New books were pledged to the drive.'
+          : event.type === 'pass' ? 'A visitor pass was issued.'
+            : 'A trek reservation was added.';
+  }
+  return event.type === 'event' ? 'A club event was updated.'
+    : event.type === 'application' ? 'Club application review was updated.'
+      : event.type === 'pledge' ? 'The book drive was updated.'
+        : event.type === 'pass' ? 'The visitor roster was updated.'
+          : 'The trek roster was updated.';
+}
+
+app.get('/api/public/activity', (req, res) => {
+  const limit = Math.min(8, Math.max(1, Number(req.query.limit) || 5));
+  const visible = new Set(['application', 'pledge', 'pass', 'reservation', 'event']);
+  const activity = store.snapshot().activity
+    .filter((event) => visible.has(event.type))
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || b.id - a.id)
+    .slice(0, limit)
+    .map((event) => ({
+      type: event.type,
+      message: publicActivityMessage(event),
+      created_at: event.created_at,
+    }));
+  res.json({ ok: true, activity });
+});
+
 // ---- pledges ----
 app.get('/api/pledges', (req, res) => {
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 8));
   const total = pledgeTotal();
+  const goal = store.bookGoal();
   res.json({
     ok: true,
     total,
-    goal: BOOK_GOAL,
-    toGo: Math.max(0, BOOK_GOAL - total),
+    goal,
+    base: store.bookBaseline(),
+    epoch: store.bookEpoch(),
+    toGo: Math.max(0, goal - total),
     pledges: stmts.listPledges.all({ limit }),
   });
 });
 
-app.post('/api/pledges', writeLimiter, (req, res) => {
+app.post('/api/pledges', writeLimiter, asyncRoute(async (req, res) => {
   const name = clean(req.body.name, 40) || 'Anonymous';
   const genre = clean(req.body.genre, 60);
   const qty = Number(req.body.qty);
+  const clientId = clean(req.body.client_id, 80);
+  const clientEpoch = req.body.client_epoch == null ? null : clean(req.body.client_epoch, 64);
   if (!GENRES.has(genre)) return res.status(400).json({ ok: false, error: 'Unknown book genre.' });
   if (!Number.isInteger(qty) || qty < 1 || qty > 20)
     return res.status(400).json({ ok: false, error: 'Quantity must be 1–20.' });
-  const info = stmts.insertPledge.run({ name, genre, qty });
-  const total = pledgeTotal();
-  res.status(201).json({ ok: true, pledge: { id: info.lastInsertRowid, name, genre, qty }, total, goal: BOOK_GOAL });
+  if (clientId && !/^[A-Za-z0-9_-]{8,80}$/.test(clientId)) return res.status(400).json({ ok: false, error: 'Invalid submission identifier.' });
+  try {
+    const info = await stmts.insertPledge.run({ name, genre, qty, clientId, clientEpoch });
+    const total = pledgeTotal();
+    res.status(info.duplicate ? 200 : 201).json({
+      ok: true, pledge: { id: info.lastInsertRowid, name, genre, qty }, total,
+      goal: store.bookGoal(), base: store.bookBaseline(), epoch: info.bookEpoch,
+      duplicate: info.duplicate,
+    });
+  } catch (error) {
+    if (error.code === 'STALE_CLIENT_EPOCH') {
+      return res.status(409).json({ ok: false, error: error.message, code: error.code });
+    }
+    throw error;
+  }
+}));
+
+function clubToday() {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+// Public event cards expose only fields intentionally entered for publication.
+app.get('/api/events', (req, res) => {
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 12));
+  const events = store.snapshot().events
+    .filter((event) => String(event.date || '') >= clubToday())
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.time || '').localeCompare(String(b.time || '')) || a.id - b.id)
+    .slice(0, limit)
+    .map(({ id, title, date, time, location, description, url, trek }) => ({ id, title, date, time, location, description, url, trek: trek || '' }));
+  res.json({ ok: true, events });
 });
 
 // ---- applications (join) ----
-app.post('/api/applications', writeLimiter, (req, res) => {
+app.post('/api/applications', writeLimiter, asyncRoute(async (req, res) => {
   const name = clean(req.body.name, 80);
   const wc = clean(req.body.wc, 60);
   const org = clean(req.body.org, 120);
@@ -168,31 +262,39 @@ app.post('/api/applications', writeLimiter, (req, res) => {
   const interests = Array.isArray(req.body.interests)
     ? [...new Set(req.body.interests.map((i) => clean(i, 20)).filter((i) => INTERESTS.has(i)))]
     : [];
+  const clientId = clean(req.body.client_id, 80);
+  const clientEpoch = req.body.client_epoch == null ? null : clean(req.body.client_epoch, 64);
   if (!isNonEmpty(name)) return res.status(400).json({ ok: false, error: 'Name is required.', field: 'name' });
   if (!isNonEmpty(wc)) return res.status(400).json({ ok: false, error: 'WeChat ID is required.', field: 'wc' });
-  const info = stmts.insertApplication.run({ name, wc, org, interests: JSON.stringify(interests), msg });
-  res.status(201).json({ ok: true, id: info.lastInsertRowid, name: name.split(' ')[0] });
-});
+  if (clientId && !/^[A-Za-z0-9_-]{8,80}$/.test(clientId)) return res.status(400).json({ ok: false, error: 'Invalid submission identifier.' });
+  try {
+    const info = await stmts.insertApplication.run({ name, wc, org, interests: JSON.stringify(interests), msg, clientId, clientEpoch });
+    res.status(info.duplicate ? 200 : 201).json({ ok: true, id: info.lastInsertRowid, name: name.split(' ')[0], epoch: info.bookEpoch, duplicate: info.duplicate });
+  } catch (error) {
+    if (error.code === 'STALE_CLIENT_EPOCH') return res.status(409).json({ ok: false, error: error.message, code: error.code });
+    throw error;
+  }
+}));
 
 app.get('/api/applications', requireAdmin, (req, res) => {
   const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
   const offset = Math.max(0, Number(req.query.offset) || 0);
-  const rows = stmts.listApplications.all({ limit, offset }).map((r) => {
-    try { r.interests = JSON.parse(r.interests); } catch { r.interests = []; }
-    return r;
-  });
+  const rows = stmts.listApplications.all({ limit, offset }).map((r) => ({
+    ...r,
+    interests: Array.isArray(r.interests) ? [...r.interests] : [],
+  }));
   res.json({ ok: true, total: stmts.countApplications.get().n, applications: rows });
 });
 
 // ---- passes ----
-app.post('/api/passes', writeLimiter, (req, res) => {
+app.post('/api/passes', writeLimiter, asyncRoute(async (req, res) => {
   const name = clean(req.body.name, 28);
   const track = clean(req.body.track, 20);
   if (!isNonEmpty(name)) return res.status(400).json({ ok: false, error: 'Name is required.' });
   if (!TRACKS.has(track)) return res.status(400).json({ ok: false, error: 'Unknown track.' });
-  const info = stmts.insertPass.run({ name, track });
+  const info = await stmts.insertPass.run({ name, track });
   res.status(201).json({ ok: true, pass: { id: info.lastInsertRowid, name, track } });
-});
+}));
 
 app.get('/api/passes/latest', (req, res) => {
   const limit = Math.min(12, Math.max(1, Number(req.query.limit) || 5));
@@ -202,24 +304,48 @@ app.get('/api/passes/latest', (req, res) => {
 // ---- reservations ----
 app.get('/api/reservations/counts', (req, res) => res.json({ ok: true, counts: reservationCounts() }));
 
-app.post('/api/reservations', writeLimiter, (req, res) => {
+app.post('/api/reservations', writeLimiter, asyncRoute(async (req, res) => {
   const name = clean(req.body.name, 80);
   const wc = clean(req.body.wc, 60);
   const trek = clean(req.body.trek, 20);
   if (!isNonEmpty(name)) return res.status(400).json({ ok: false, error: 'Name is required.' });
   if (!isNonEmpty(wc)) return res.status(400).json({ ok: false, error: 'WeChat ID is required.' });
-  const t = TREKS.find((x) => x.id === trek);
-  if (!t) return res.status(400).json({ ok: false, error: 'Unknown trek.' });
-  const counts = reservationCounts();
-  if (counts[trek] >= t.seats) return res.status(409).json({ ok: false, error: 'This trek is full. You are on the waitlist — we will reach out.' });
+  const definition = TREKS.find((item) => item.id === trek);
+  if (!definition) return res.status(400).json({ ok: false, error: 'Unknown trek.' });
   try {
-    const info = stmts.insertReservation.run({ name, wc, trek });
-    res.status(201).json({ ok: true, id: info.lastInsertRowid, trek, left: t.seats - counts[trek] - 1 });
-  } catch (err) {
-    if (String(err.message).includes('UNIQUE'))
-      return res.status(409).json({ ok: false, error: 'This WeChat ID already reserved a spot on this trek.' });
-    throw err;
+    const info = await stmts.insertReservation.run({
+      name, wc, trek, status: 'confirmed', seatLimit: definition.seats, waitlistWhenFull: true,
+    });
+    const counts = reservationCounts();
+    if (info.status === 'waitlisted') {
+      return res.status(201).json({ ok: true, id: info.lastInsertRowid, trek, waitlisted: true, left: 0 });
+    }
+    res.status(201).json({ ok: true, id: info.lastInsertRowid, trek, left: Math.max(0, definition.seats - (counts[trek] || 0)) });
+  } catch (error) {
+    if (error.code === '23505' || String(error.message).includes('UNIQUE')) {
+      return res.status(409).json({ ok: false, error: 'This WeChat ID already has a seat or waitlist spot on this trek.' });
+    }
+    throw error;
   }
+}));
+
+/* ---------------- club desk ---------------- */
+registerAdmin(app, {
+  requireAdmin,
+  clean,
+  isNonEmpty,
+  TREKS,
+  GENRES,
+  TRACKS,
+  INTERESTS,
+  asyncRoute,
+});
+
+app.get(['/admin', '/admin/'], (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'admin.html'));
+});
+app.get(['/events', '/events/'], (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'events.html'));
 });
 
 /* ---------------- errors & fallback ---------------- */
@@ -228,12 +354,27 @@ app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Not foun
 app.use((err, req, res, next) => {
   console.error(err);
   if (res.headersSent) return;
+  const storage = store.storageStatus();
+  if (req.path.startsWith('/api/') && storage.databaseConfigured && !storage.ready) {
+    return res.status(503).json({
+      ok: false,
+      error: storage.storage === 'initializing'
+        ? 'The database is still initializing. Please retry shortly.'
+        : 'The database connection is unavailable. Check DATABASE_URL in the deployment settings and the server logs.',
+      code: storage.databaseErrorCode || 'STORAGE_UNAVAILABLE',
+    });
+  }
   res.status(err.status || 500).json({ ok: false, error: 'Something went wrong. Please try again.' });
 });
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 
 if (require.main === module) {
-  app.listen(PORT, '0.0.0.0', () => console.log(`Hi World Club running on http://0.0.0.0:${PORT}`));
+  store.ready.then(() => {
+    app.listen(PORT, '0.0.0.0', () => console.log(`Hi World Club running on http://0.0.0.0:${PORT} (${store.storageMode()} storage)`));
+  }).catch((error) => {
+    console.error('Server could not initialize its data store:', error.message);
+    process.exitCode = 1;
+  });
 }
 
 module.exports = app;

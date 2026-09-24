@@ -27,6 +27,10 @@ const COLLECTIONS = ['pledges', 'applications', 'passes', 'reservations'];
 const STORE_COLLECTIONS = [...COLLECTIONS, 'events'];
 const DEFAULT_BOOK_GOAL = 500;
 const DEFAULT_BOOK_BASELINE = 347;
+const DEFAULT_TREKS = [
+  { id: 'alibaba', name: 'Alibaba HQ · Hangzhou', days: '1 day', location: 'Hangzhou', themes: 'E-commerce · Cloud · Logistics', seats: 20, image: '/images/trek-alibaba.jpg', alt: 'Student tour group at a modern technology campus', caption: 'Alibaba HQ, Hangzhou — platform operations up close.', description: 'See platform operations, cloud, and logistics up close.', itinerary: ['09:30|Arrival, visitor badge & lanyard pickup', '10:00|Campus walk and company exhibition', '11:30|Host talk: how platforms scale', '13:00|Lunch in the staff canteen', '14:30|Q&A with product & ops teams', '16:00|Group debrief & reflections'], takeaways: ['A first-hand look at platform operations', 'Notes from a live Q&A with practitioners', 'A one-page trek brief you write with your team'], note: '', archived: false },
+  { id: 'refinery', name: 'Private Refinery Island', days: '2 days', location: 'Island site · ferry transfer', themes: 'Energy · Operations · Safety', seats: 16, image: '/images/trek-refinery.jpg', alt: 'Island refinery glowing at dusk seen from the water', caption: 'Private refinery island — ferry in at dusk.', description: 'Explore energy operations, logistics, and industrial safety.', itinerary: ['Day 1|Ferry transfer and site safety induction', 'Day 1|Control room walkthrough', "Day 1|Evening: engineers' fireside chat", 'Day 2|Logistics & marine terminal tour', 'Day 2|Panel: careers in heavy industry', 'Day 2|Debrief on the ferry home'], takeaways: ['An inside view of large-scale operations', 'Safety culture lessons you can apply anywhere', 'Contacts across engineering & supply chain'], note: 'PPE is provided. ID details are needed in advance for site access.', archived: false },
+];
 const TREK_LABELS = { alibaba: 'Alibaba HQ', refinery: 'Refinery Island' };
 const ACTIVE_SEAT_STATUSES = new Set(['confirmed', 'checked-in']);
 const DATABASE_URL = String(process.env.DATABASE_URL || '').trim();
@@ -46,7 +50,7 @@ function clone(value) {
 }
 
 function trekLabel(id) {
-  return TREK_LABELS[id] || id;
+  return data?.meta?.treks?.find((trek) => trek.id === id)?.name || TREK_LABELS[id] || id;
 }
 
 function now() {
@@ -69,6 +73,14 @@ function migrate(value) {
   }
   next.activity = Array.isArray(next.activity) ? next.activity : [];
   next.meta = next.meta && typeof next.meta === 'object' ? next.meta : {};
+  if (!Array.isArray(next.meta.treks)) next.meta.treks = clone(DEFAULT_TREKS);
+  next.meta.treks = next.meta.treks.filter((trek) => trek && typeof trek === 'object' && /^[a-z0-9-]{2,30}$/.test(String(trek.id || ''))).map((trek) => ({
+    ...trek,
+    seats: Math.max(1, Math.min(10000, Number(trek.seats) || 1)),
+    itinerary: Array.isArray(trek.itinerary) ? trek.itinerary.map(String).slice(0, 30) : [],
+    takeaways: Array.isArray(trek.takeaways) ? trek.takeaways.map(String).slice(0, 20) : [],
+    archived: Boolean(trek.archived),
+  }));
 
   const configuredGoal = Number(next.meta.bookGoal);
   next.meta.bookGoal = Number.isInteger(configuredGoal) && configuredGoal >= 1 && configuredGoal <= 100000
@@ -586,6 +598,22 @@ const store = {
   bookEpoch: () => String(data.meta.cleared_at || ''),
   setBookGoal: (goal) => mutate((state) => { state.meta.bookGoal = goal; return goal; }),
   setBookBaseline: (baseline) => mutate((state) => { state.meta.bookBaseline = baseline; return baseline; }),
+  treks: (includeArchived = false) => clone((data.meta.treks || DEFAULT_TREKS).filter((trek) => includeArchived || !trek.archived)),
+  saveTrek: (trek) => mutate((state) => {
+    state.meta.treks ||= clone(DEFAULT_TREKS);
+    const index = state.meta.treks.findIndex((item) => item.id === trek.id);
+    const stamped = { ...(index >= 0 ? state.meta.treks[index] : {}), ...clone(trek), updated_at: now() };
+    if (index >= 0) state.meta.treks[index] = stamped;
+    else state.meta.treks.push(stamped);
+    return stamped;
+  }),
+  archiveTrek: (id, archived = true) => mutate((state) => {
+    const trek = (state.meta.treks || []).find((item) => item.id === id);
+    if (!trek) return null;
+    trek.archived = archived;
+    trek.updated_at = now();
+    return trek;
+  }),
   trekLabel,
   hasOpenReservation: (wc, trek, exceptId) => data.reservations.some((row) => row.wc === wc && row.trek === trek && row.id !== exceptId && row.status !== 'cancelled'),
   seatsTaken: (trek, exceptId) => reservationCount(data, trek, exceptId),
@@ -628,20 +656,23 @@ const store = {
     counts.activity = state.activity.length;
     counts.historicalBooks = Number(state.meta.bookBaseline) || 0;
     const bookGoal = state.meta.bookGoal;
+    const treks = clone(state.meta.treks || DEFAULT_TREKS);
     const clearedAt = now();
     for (const collection of STORE_COLLECTIONS) state[collection] = [];
     state.activity = [];
     state.seq = 1;
-    state.meta = { bookGoal, bookBaseline: 0, suppressDemoSeed: true, cleared_at: clearedAt };
+    state.meta = { bookGoal, bookBaseline: 0, treks, suppressDemoSeed: true, cleared_at: clearedAt };
     return counts;
   }),
   replaceAll: (next) => mutate((state) => {
     const currentGoal = state.meta.bookGoal;
     const currentBaseline = state.meta.bookBaseline;
+    const currentTreks = clone(state.meta.treks || DEFAULT_TREKS);
     const replacement = clone(next);
     replacement.meta = { ...(replacement.meta || {}) };
     if (replacement.meta.bookGoal == null) replacement.meta.bookGoal = currentGoal;
     if (replacement.meta.bookBaseline == null) replacement.meta.bookBaseline = currentBaseline;
+    if (replacement.meta.treks == null) replacement.meta.treks = currentTreks;
     const normalized = migrate(replacement);
     for (const key of Object.keys(state)) delete state[key];
     Object.assign(state, normalized);

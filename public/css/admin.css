@@ -566,6 +566,9 @@ details.edit summary { cursor: pointer; font-weight: 600; }
 .trek-event-actions { display: flex; flex: none; gap: 8px; }
 .danger-link { color: #a3352a !important; }
 .trek-card-links { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.trek-manage-bar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: 0 0 10px; }
+.trek-manage-bar b { margin-right: auto; font: 600 18px var(--serif); }
+.archived-trek { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 @media (max-width: 680px) {
   .admin-event-grid { grid-template-columns: 1fr; }
   .book-heading { align-items: flex-start; }

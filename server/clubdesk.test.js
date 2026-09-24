@@ -157,6 +157,32 @@ test('club desk auth, live totals, status actions, and trek capacity', async (t)
       assert.match(home.data, /data-trek-events="alibaba"/);
       assert.match(home.data, /data-trek-events="refinery"/);
 
+      const trekDenied = await request(base, '/api/admin/trek-definitions');
+      assert.equal(trekDenied.response.status, 401);
+      const newTrek = await request(base, '/api/admin/trek-definitions', {
+        method: 'POST', admin: true, body: {
+          id: 'design-studio', name: 'Design Studio', seats: 12, days: '1 day', location: 'Hangzhou',
+          themes: 'Design · Craft', description: 'A working studio visit.', image: 'data:image/png;base64,iVBORw0KGgo=',
+          itinerary: ['10:00|Studio welcome'], takeaways: ['A portfolio review'], note: 'Bring a sketchbook.',
+        },
+      });
+      assert.equal(newTrek.response.status, 201);
+      assert.equal(newTrek.data.trek.name, 'Design Studio');
+      let publicTreks = await request(base, '/api/treks');
+      assert.ok(publicTreks.data.treks.some((trek) => trek.id === 'design-studio' && trek.seats === 12));
+      const editedTrek = await request(base, '/api/admin/trek-definitions/design-studio', {
+        method: 'PATCH', admin: true, body: { name: 'Product Design Studio', seats: 14 },
+      });
+      assert.equal(editedTrek.response.status, 200);
+      assert.equal(editedTrek.data.trek.seats, 14);
+      const archivedTrek = await request(base, '/api/admin/trek-definitions/design-studio', { method: 'DELETE', admin: true });
+      assert.equal(archivedTrek.response.status, 200);
+      publicTreks = await request(base, '/api/treks');
+      assert.equal(publicTreks.data.treks.some((trek) => trek.id === 'design-studio'), false);
+      const restoredTrek = await request(base, '/api/admin/trek-definitions/design-studio/restore', { method: 'POST', admin: true });
+      assert.equal(restoredTrek.response.status, 200);
+      await request(base, '/api/admin/trek-definitions/design-studio', { method: 'DELETE', admin: true });
+
       const past = await request(base, '/api/admin/events', {
         method: 'POST', admin: true, body: { title: 'Past club meetup', date: '2000-01-01' },
       });

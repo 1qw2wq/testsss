@@ -43,7 +43,7 @@ const GENRES = new Set([
 ]);
 const TRACKS = new Set(['All-rounder', 'Treks', 'Craft', 'Impact']);
 const INTERESTS = new Set(['treks', 'workshops', 'csr']);
-const TREKS = [
+const DEFAULT_TREKS = [
   {
     id: 'alibaba',
     name: 'Alibaba HQ · Hangzhou',
@@ -70,7 +70,9 @@ const TREKS = [
 // NOTE: frameguard / CSP disabled so the site can run inside proxied previews & iframes.
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false, frameguard: false }));
 app.use(cors());
-app.use(express.json({ limit: '64kb' }));
+// Trek images are compressed in the admin browser and stored with the durable
+// PostgreSQL state. Keep this below Vercel's request limit.
+app.use(express.json({ limit: '2.5mb' }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 const apiLimiter = rateLimit({ windowMs: 60_000, max: 180, standardHeaders: 'draft-8', legacyHeaders: false });
@@ -113,8 +115,8 @@ const isNonEmpty = (v) => clean(v).length > 0;
 
 function reservationCounts() {
   const rows = stmts.countByTrek.all();
-  const counts = { alibaba: 0, refinery: 0 };
-  for (const r of rows) counts[r.trek] = r.n;
+  const counts = Object.fromEntries(store.treks().map((trek) => [trek.id, 0]));
+  for (const r of rows) if (counts[r.trek] != null) counts[r.trek] = r.n;
   return counts;
 }
 
@@ -133,7 +135,7 @@ app.get('/api/treks', (req, res) => {
   const counts = reservationCounts();
   res.json({
     ok: true,
-    treks: TREKS.map((t) => ({
+    treks: store.treks().map((t) => ({
       ...t,
       reserved: counts[t.id] || 0,
       left: Math.max(0, t.seats - (counts[t.id] || 0)),
@@ -310,7 +312,7 @@ app.post('/api/reservations', writeLimiter, asyncRoute(async (req, res) => {
   const trek = clean(req.body.trek, 20);
   if (!isNonEmpty(name)) return res.status(400).json({ ok: false, error: 'Name is required.' });
   if (!isNonEmpty(wc)) return res.status(400).json({ ok: false, error: 'WeChat ID is required.' });
-  const definition = TREKS.find((item) => item.id === trek);
+  const definition = store.treks().find((item) => item.id === trek);
   if (!definition) return res.status(400).json({ ok: false, error: 'Unknown trek.' });
   try {
     const info = await stmts.insertReservation.run({
@@ -334,7 +336,8 @@ registerAdmin(app, {
   requireAdmin,
   clean,
   isNonEmpty,
-  TREKS,
+  getTreks: (includeArchived = false) => store.treks(includeArchived),
+  DEFAULT_TREKS,
   GENRES,
   TRACKS,
   INTERESTS,

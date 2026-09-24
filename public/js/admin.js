@@ -76,6 +76,7 @@
     renderedRoute: null,
     eventRows: [],
     trekEventRows: [],
+    trekDefinitions: [],
     restoreFocus: null,
     loading: false,
   };
@@ -627,7 +628,7 @@
       <div class="track"><i style="width:${t.seats ? Math.min(100, (t.taken / t.seats) * 100) : 0}%;background:#315b8f"></i></div>
       <p class="kpi-sub">${nfmt(t.left)} open · ${nfmt(t.waitlisted)} waitlisted · ${nfmt(t.checkedIn)} checked in</p>
       ${(t.events || []).length ? `<div class="trek-linked-events"><p class="eyebrow">Linked events</p>${t.events.map((event) => `<div class="trek-linked-event"><div><strong>${esc(event.title)}</strong><span>${esc(eventDateLabel(event.date))}${event.time ? ` · ${esc(event.time)}` : ''}${event.location ? ` · ${esc(event.location)}` : ''}</span></div><div class="trek-event-actions"><button type="button" class="linkish" data-act="edit-trek-event" data-id="${event.id}">Edit</button><button type="button" class="linkish danger-link" data-act="delete-trek-event" data-id="${event.id}" data-title="${attr(event.title)}">Delete</button></div></div>`).join('')}</div>` : '<p class="kpi-sub">No events linked to this trek.</p>'}
-      <div class="trek-card-links"><button type="button" class="linkish" data-act="filter" data-key="trek" data-value="${attr(t.id)}">View roster →</button><button type="button" class="linkish" data-act="add-trek-event" data-trek="${attr(t.id)}">＋ Add event</button><a class="linkish" href="#/events">All events →</a></div>
+      <div class="trek-card-links"><button type="button" class="linkish" data-act="filter" data-key="trek" data-value="${attr(t.id)}">View roster →</button><button type="button" class="linkish" data-act="add-trek-event" data-trek="${attr(t.id)}">＋ Add event</button><button type="button" class="linkish" data-act="edit-trek" data-id="${attr(t.id)}">Edit trek</button><button type="button" class="linkish danger-link" data-act="archive-trek" data-id="${attr(t.id)}">Archive</button></div>
     </article>`).join('')}</div>`;
   }
 
@@ -651,7 +652,7 @@
     if (collection === 'applications') {
       extra = filterSelect('interest', 'interest', params.get('interest') || 'all', [['treks', 'Treks'], ['workshops', 'Workshops'], ['csr', 'Book drive']]);
     } else if (collection === 'reservations') {
-      extra = filterSelect('trek', 'trek', params.get('trek') || 'all', [['alibaba', 'Alibaba HQ'], ['refinery', 'Refinery Island']]);
+      extra = filterSelect('trek', 'trek', params.get('trek') || 'all', state.trekDefinitions.map((trek) => [trek.id, trek.name]));
     } else if (collection === 'passes') {
       extra = filterSelect('track', 'track', params.get('track') || 'all', TRACKS.map((x) => [x, x]));
     } else if (collection === 'pledges') {
@@ -705,8 +706,9 @@
       header = commonPageHead(collection, label, payload.total, add);
       let extra = '';
       if (collection === 'reservations') {
-        state.trekEventRows = (payload.capacity || []).flatMap((trek) => trek.events || []);
-        extra = trekCapacityCards(payload.capacity || []);
+        state.trekDefinitions = payload.capacity || [];
+        state.trekEventRows = state.trekDefinitions.flatMap((trek) => trek.events || []);
+        extra = `<div class="trek-manage-bar"><b>Destinations</b><button type="button" class="btn btn-ink btn-sm" data-act="add-trek">＋ Add trek</button><button type="button" class="btn btn-sm" data-act="archived-treks">Archived treks</button></div>${trekCapacityCards(state.trekDefinitions)}`;
       }
       if (collection === 'pledges') extra = bookDriveSummary(payload.books);
       const content = `${header}${extra}${toolbar(collection, route, payload)}<div class="print-only">Hi World Club · ${esc(ROUTES[route.view].title)} · printed ${esc(niceDate(new Date().toISOString(), { long: true }))}</div>
@@ -853,7 +855,7 @@
     } else if (collection === 'passes') {
       fields = `${input('name', 'Visitor', row.name)}<div class="field"><label for="edit-track">Track</label><select id="edit-track" name="track">${TRACKS.map((t) => `<option ${t === row.track ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div>`;
     } else {
-      fields = `${input('name', 'Visitor', row.name)}${input('wc', 'WeChat ID', row.wc)}<div class="field full"><label for="edit-trek">Trek</label><select id="edit-trek" name="trek"><option value="alibaba" ${row.trek === 'alibaba' ? 'selected' : ''}>Alibaba HQ · Hangzhou</option><option value="refinery" ${row.trek === 'refinery' ? 'selected' : ''}>Refinery Island</option></select></div>`;
+      fields = `${input('name', 'Visitor', row.name)}${input('wc', 'WeChat ID', row.wc)}<div class="field full"><label for="edit-trek">Trek</label><select id="edit-trek" name="trek">${state.trekDefinitions.map((trek) => `<option value="${attr(trek.id)}" ${row.trek === trek.id ? 'selected' : ''}>${esc(trek.name)}</option>`).join('')}</select></div>`;
     }
     return `<details class="edit"><summary>Edit record details</summary><form data-form="edit-record" data-type="${collection}" data-id="${row.id}"><div class="form-grid">${fields}</div><div class="dialog-actions"><button type="submit" class="btn btn-ink btn-sm">Save details</button></div></form></details>`;
   }
@@ -970,7 +972,7 @@
     } else {
       fields = `<div class="field"><label for="add-name">Visitor name *</label><input id="add-name" name="name" required maxlength="80" /></div>
         <div class="field"><label for="add-wc">WeChat ID *</label><input id="add-wc" name="wc" required maxlength="60" /></div>
-        <div class="field"><label for="add-trek">Trek *</label><select id="add-trek" name="trek"><option value="alibaba">Alibaba HQ · Hangzhou</option><option value="refinery">Refinery Island</option></select></div>
+        <div class="field"><label for="add-trek">Trek *</label><select id="add-trek" name="trek">${state.trekDefinitions.map((trek) => `<option value="${attr(trek.id)}">${esc(trek.name)}</option>`).join('')}</select></div>
         <div class="field"><label for="add-status">Status</label><select id="add-status" name="status">${statusOptionsHtml(collection, 'confirmed')}</select><small class="sub">If the trek is full, add them to the waitlist.</small></div>`;
     }
     els.modalCard.innerHTML = `<p class="eyebrow">Club desk · manual entry</p><h2>${esc(heading)}</h2><p class="dialog-lead">Manual records use the same validation, audit trail, and capacity rules as the public forms.</p>
@@ -978,6 +980,28 @@
       <div class="field full"><label for="add-notes">Private desk note</label><textarea id="add-notes" name="notes" maxlength="2000" placeholder="Optional context for the team"></textarea></div></div><p class="form-err" data-form-error hidden></p><div class="dialog-actions"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn btn-ink" type="submit">Save record</button></div></form>`;
     openModal();
     $('#add-name', els.modalCard)?.focus({ preventScroll: true });
+  }
+
+  function trekModal(trek = null) {
+    const editing = !!trek;
+    const lines = (value) => esc((value || []).join('\n'));
+    els.modalCard.innerHTML = `<p class="eyebrow">Club desk · destination</p><h2>${editing ? 'Edit trek' : 'Add a trek'}</h2><p class="dialog-lead">Changes update the public trek window and reservation capacity. Uploaded images are compressed and saved in the database.</p>
+      <form data-form="trek-definition" data-id="${attr(trek?.id || '')}" novalidate><div class="form-grid">
+      <div class="field"><label>Trek ID *</label><input name="id" required maxlength="30" pattern="[a-z0-9-]+" ${editing ? 'readonly' : ''} value="${attr(trek?.id || '')}" placeholder="shanghai-studio" /></div>
+      <div class="field"><label>Name *</label><input name="name" required maxlength="100" value="${attr(trek?.name || '')}" /></div>
+      <div class="field"><label>Duration</label><input name="days" maxlength="40" value="${attr(trek?.days || '')}" placeholder="1 day" /></div>
+      <div class="field"><label>Seat capacity *</label><input name="seats" type="number" min="1" max="10000" required value="${attr(trek?.seats || 20)}" /></div>
+      <div class="field full"><label>Location</label><input name="location" maxlength="120" value="${attr(trek?.location || '')}" /></div>
+      <div class="field full"><label>Themes</label><input name="themes" maxlength="160" value="${attr(trek?.themes || '')}" placeholder="Design · Manufacturing · Operations" /></div>
+      <div class="field full"><label>Public description</label><textarea name="description" maxlength="1000">${esc(trek?.description || '')}</textarea></div>
+      <div class="field full"><label>Trek image</label><input name="imageFile" type="file" accept="image/jpeg,image/png,image/webp" /><input name="image" type="hidden" value="${attr(trek?.image || '')}" /><small class="sub">JPEG, PNG, or WebP. It will be resized and compressed; maximum stored size 1.5 MB.</small></div>
+      <div class="field"><label>Image caption</label><input name="caption" maxlength="240" value="${attr(trek?.caption || '')}" /></div>
+      <div class="field"><label>Image alt text</label><input name="alt" maxlength="200" value="${attr(trek?.alt || '')}" /></div>
+      <div class="field full"><label>Itinerary — one item per line</label><textarea name="itinerary" rows="6" placeholder="09:30|Arrival and welcome">${lines(trek?.itinerary)}</textarea></div>
+      <div class="field full"><label>Takeaways — one item per line</label><textarea name="takeaways" rows="4">${lines(trek?.takeaways)}</textarea></div>
+      <div class="field full"><label>Access / PPE note</label><textarea name="note" maxlength="600">${esc(trek?.note || '')}</textarea></div>
+      </div><p class="form-err" data-form-error hidden></p><div class="dialog-actions"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn btn-ink" type="submit">${editing ? 'Save trek' : 'Create trek'}</button></div></form>`;
+    openModal();
   }
 
   function eventModal(event = null, defaultTrek = '') {
@@ -988,7 +1012,7 @@
         <div class="field full"><label for="event-title">Event title *</label><input id="event-title" name="title" maxlength="100" required value="${attr(event?.title || '')}" placeholder="Community book swap" /></div>
         <div class="field"><label for="event-date">Date *</label><input id="event-date" name="date" type="date" required value="${attr(event?.date || '')}" /></div>
         <div class="field"><label for="event-time">Start time</label><input id="event-time" name="time" type="time" value="${attr(event?.time || '')}" /><small class="sub">Hangzhou local time (UTC+8)</small></div>
-        <div class="field"><label for="event-trek">Show in</label><select id="event-trek" name="trek"><option value="" ${!selectedTrek ? 'selected' : ''}>General calendar only</option><option value="alibaba" ${selectedTrek === 'alibaba' ? 'selected' : ''}>Alibaba HQ · Hangzhou</option><option value="refinery" ${selectedTrek === 'refinery' ? 'selected' : ''}>Private Refinery Island</option></select><small class="sub">Linked events also appear in the matching trek window.</small></div>
+        <div class="field"><label for="event-trek">Show in</label><select id="event-trek" name="trek"><option value="" ${!selectedTrek ? 'selected' : ''}>General calendar only</option>${state.trekDefinitions.map((trek) => `<option value="${attr(trek.id)}" ${selectedTrek === trek.id ? 'selected' : ''}>${esc(trek.name)}</option>`).join('')}</select><small class="sub">Linked events also appear in the matching trek window.</small></div>
         <div class="field full"><label for="event-location">Location</label><input id="event-location" name="location" maxlength="120" value="${attr(event?.location || '')}" placeholder="School library · Hangzhou" /></div>
         <div class="field full"><label for="event-description">Description</label><textarea id="event-description" name="description" maxlength="600" rows="4" placeholder="What should attendees know?">${esc(event?.description || '')}</textarea></div>
         <div class="field full"><label for="event-url">Event link <span class="sub-inline">(optional, HTTPS)</span></label><input id="event-url" name="url" type="url" maxlength="500" value="${attr(event?.url || '')}" placeholder="https://…" /></div>
@@ -1081,6 +1105,51 @@
       showFormError(form, err.message);
       button.disabled = false;
     }
+  }
+
+  async function compressTrekImage(file) {
+    if (!file) return '';
+    if (file.size > 8_000_000) throw new Error('Choose an image smaller than 8 MB.');
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    return canvas.toDataURL('image/jpeg', 0.78);
+  }
+
+  async function submitTrek(form) {
+    const button = $('button[type="submit"]', form);
+    button.disabled = true;
+    try {
+      const payload = formToData(form);
+      payload.seats = Number(payload.seats);
+      const file = form.elements.imageFile.files[0];
+      delete payload.imageFile;
+      if (file) payload.image = await compressTrekImage(file);
+      const id = form.dataset.id;
+      await api(id ? `/api/admin/trek-definitions/${encodeURIComponent(id)}` : '/api/admin/trek-definitions', { method: id ? 'PATCH' : 'POST', body: payload });
+      closeModal();
+      toast(id ? 'Trek updated.' : 'Trek created.');
+      await renderRoute({ quiet: true });
+    } catch (err) { showFormError(form, err.message); button.disabled = false; }
+  }
+
+  async function archiveTrek(id) {
+    const trek = state.trekDefinitions.find((item) => item.id === id);
+    if (!await askConfirm('Archive this trek?', `“${trek?.name || id}” will disappear from the public site and new reservations, while its visitors, events, and history are preserved.`, 'Archive trek', true)) return;
+    try { await api(`/api/admin/trek-definitions/${encodeURIComponent(id)}`, { method: 'DELETE' }); toast('Trek archived.'); await renderRoute({ quiet: true }); } catch (err) { toast(err.message); }
+  }
+
+  async function showArchivedTreks() {
+    try {
+      const data = await api('/api/admin/trek-definitions');
+      const archived = data.treks.filter((trek) => trek.archived);
+      els.modalCard.innerHTML = `<p class="eyebrow">Club desk · destinations</p><h2>Archived treks</h2>${archived.length ? archived.map((trek) => `<div class="archived-trek"><b>${esc(trek.name)}</b><button class="btn btn-sm" type="button" data-act="restore-trek" data-id="${attr(trek.id)}">Restore</button></div>`).join('') : '<p class="dialog-lead">No archived treks.</p>'}<div class="dialog-actions"><button class="btn" type="button" data-act="close-modal">Close</button></div>`;
+      openModal();
+    } catch (err) { toast(err.message); }
   }
 
   async function submitClubEvent(form) {
@@ -1367,6 +1436,18 @@
       updateBadges().catch(() => {});
     } else if (action === 'add') {
       addModal(target.dataset.type);
+    } else if (action === 'add-trek') {
+      trekModal();
+    } else if (action === 'edit-trek') {
+      const trek = state.trekDefinitions.find((item) => item.id === target.dataset.id);
+      if (trek) trekModal(trek);
+    } else if (action === 'archive-trek') {
+      await archiveTrek(target.dataset.id);
+    } else if (action === 'archived-treks') {
+      await showArchivedTreks();
+    } else if (action === 'restore-trek') {
+      await api(`/api/admin/trek-definitions/${encodeURIComponent(target.dataset.id)}/restore`, { method: 'POST' });
+      closeModal(); toast('Trek restored.'); await renderRoute({ quiet: true });
     } else if (action === 'add-event') {
       eventModal();
     } else if (action === 'add-trek-event') {
@@ -1481,6 +1562,9 @@
     if (form.matches('[data-form="add-record"]')) {
       event.preventDefault();
       await submitAdd(form);
+    } else if (form.matches('[data-form="trek-definition"]')) {
+      event.preventDefault();
+      await submitTrek(form);
     } else if (form.matches('[data-form="club-event"]')) {
       event.preventDefault();
       await submitClubEvent(form);

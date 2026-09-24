@@ -27,7 +27,7 @@ Useful environment variables:
 | `ADMIN_TOKEN` | Club-desk key. Set a private value outside local development. |
 | `DATABASE_URL` | PostgreSQL connection string. When present, PostgreSQL is the source of truth. |
 | `DATABASE_SSL` | Set to `1` if the provider requires TLS but the connection string does not enable it. |
-| `DATABASE_SSL_REJECT_UNAUTHORIZED` | Set to `true` to verify the TLS certificate; set to `false` only if you intentionally accept encrypted TLS without server-certificate verification. |
+| `DATABASE_SSL_REJECT_UNAUTHORIZED` | Optional. Set to `true` to verify the server certificate; `false` selects encrypted TLS without verification (also the default for `sslmode=require`). |
 | `DATABASE_SSL_CA` | Optional PEM root certificate for verifying a provider's private CA; literal `\n` newlines are accepted. |
 | `PGPOOL_MAX` | Maximum PostgreSQL pool size per instance (default `1` on Vercel, `5` elsewhere). |
 | `DB_PATH` | JSON-store path and one-time PostgreSQL bootstrap source (default `data/club.json`; Vercel fallback is `/tmp/hiworld-club.json`). |
@@ -43,7 +43,15 @@ The JSONB approach keeps the existing data model intact while making PostgreSQL 
 
 `GET /api/health` remains reachable during database startup and reports `storage: "postgres"`, `"json"`, `"initializing"`, or `"unavailable"`; a failed PostgreSQL connection includes a safe error code without exposing credentials. On Vercel, confirm it reports `postgres` before clearing or editing live records; `json` means the app is using ephemeral `/tmp` storage and writes may not persist consistently between serverless instances. For Supabase, set `DATABASE_URL` to the project’s transaction-pooler PostgreSQL URI (not `SUPABASE_URL` or an API key), then redeploy.
 
-With node-postgres, `sslmode=require` enables TLS and currently also verifies the server certificate. A provider's private CA can therefore cause `SELF_SIGNED_CERT_IN_CHAIN`. The preferred fix is to set `DATABASE_SSL_CA` to the provider root certificate (Supabase provides it in Database settings) and `DATABASE_SSL_REJECT_UNAUTHORIZED=true`; the app merges this CA into the driver settings even when the URI contains SSL parameters. If you intentionally want encrypted TLS without certificate verification, set `DATABASE_SSL_REJECT_UNAUTHORIZED=false` or add `uselibpqcompat=true` to the URI query. TLS stays enabled, but that choice does not authenticate the server. Avoid the process-wide `NODE_TLS_REJECT_UNAUTHORIZED=0` setting.
+With node-postgres, `sslmode=require` historically enabled TLS **and** verified the server certificate, so a provider's private CA (Supabase poolers and similar) failed with `SELF_SIGNED_CERT_IN_CHAIN`. The app now follows libpq semantics instead: `sslmode=require` (as well as `allow`, `prefer`, `?ssl=true`, and `DATABASE_SSL=1`) requests an **encrypted** connection without authenticating the server certificate, so private provider CAs connect out of the box.
+
+Certificate verification stays available when you ask for it:
+
+- Add `sslmode=verify-ca` or `sslmode=verify-full` to the `DATABASE_URL` query, or set `DATABASE_SSL_REJECT_UNAUTHORIZED=true`.
+- The preferred, strictest option is `DATABASE_SSL_CA` set to the provider's root PEM certificate (Supabase provides it in Database settings); the app merges this CA into the driver settings even when the URI contains SSL parameters, and verifies against it.
+- `sslmode=disable` in the URI keeps TLS off entirely, and `DATABASE_SSL_REJECT_UNAUTHORIZED=false` intentionally selects encrypted-but-unverified TLS.
+
+If strict verification cannot be completed, `/api/health` and the API error responses include the TLS error code plus a `hint` explaining which setting to adjust. Encrypted-but-unverified TLS still protects against passive eavesdropping but does not authenticate the server, so prefer `DATABASE_SSL_CA` when the provider offers a root certificate. Avoid the process-wide `NODE_TLS_REJECT_UNAUTHORIZED=0` setting.
 
 ## Club desk and book totals
 

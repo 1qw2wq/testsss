@@ -355,6 +355,35 @@ function initializeFileStore() {
   }
 }
 
+const TLS_VERIFICATION_ERROR_HINTS = {
+  SELF_SIGNED_CERT_IN_CHAIN:
+    'The database TLS certificate is signed by a private certificate authority. '
+    + 'To verify it, set DATABASE_SSL_CA to the provider root certificate. '
+    + 'Otherwise remove sslmode=verify-ca/verify-full and DATABASE_SSL_REJECT_UNAUTHORIZED=true '
+    + 'to connect with encrypted-but-unverified TLS.',
+  DEPTH_ZERO_SELF_SIGNED_CERT:
+    'The database presented a self-signed TLS certificate. Provide its certificate authority via '
+    + 'DATABASE_SSL_CA to verify it, or drop the strict verification settings to use encrypted TLS.',
+  UNABLE_TO_VERIFY_LEAF_SIGNATURE:
+    'The database TLS certificate could not be verified. Provide the provider root certificate via '
+    + 'DATABASE_SSL_CA, or drop the strict verification settings to use encrypted TLS.',
+  UNABLE_TO_GET_ISSUER_CERT_LOCALLY:
+    'The database TLS chain is rooted in a certificate authority that is not trusted here. '
+    + 'Provide the provider root certificate via DATABASE_SSL_CA, or drop the strict verification '
+    + 'settings to use encrypted TLS.',
+  UNABLE_TO_GET_ISSUER_CERT:
+    'The database TLS chain is rooted in a certificate authority that is not trusted here. '
+    + 'Provide the provider root certificate via DATABASE_SSL_CA, or drop the strict verification '
+    + 'settings to use encrypted TLS.',
+  CERT_HAS_EXPIRED:
+    'The database TLS certificate has expired. Renew it with the provider, or temporarily drop the '
+    + 'strict verification settings to use encrypted TLS.',
+  ERR_TLS_CERT_ALTNAME_INVALID:
+    'The database TLS certificate does not match the host name in DATABASE_URL. '
+    + 'Use a connection URL whose host matches the certificate, or drop the strict verification '
+    + 'settings to use encrypted TLS.',
+};
+
 function postgresConnectionConfig(connectionString, env = process.env) {
   const { parse } = require('pg-connection-string');
   const config = parse(connectionString);
@@ -366,15 +395,28 @@ function postgresConnectionConfig(connectionString, env = process.env) {
   const sslRequested = /^(1|true|require)$/i.test(String(env.DATABASE_SSL || ''));
   const urlRequestsSsl = (!!sslMode && sslMode !== 'disable') || config.ssl === true
     || (config.ssl && typeof config.ssl === 'object');
+  const urlVerifiesCertificates = sslMode === 'verify-ca' || sslMode === 'verify-full';
 
-  if (sslCa) {
+  if (sslMode === 'disable') {
+    // The connection string explicitly opts out of TLS; nothing re-enables it.
+    config.ssl = false;
+  } else if (sslCa) {
     // A provider root certificate lets us validate private CA chains without disabling TLS checks.
     config.ssl = { ...ssl, ca: sslCa, rejectUnauthorized: true };
   } else if (verifyCertificates) {
     config.ssl = { ...ssl, rejectUnauthorized: true };
   } else if (allowUnverified && (urlRequestsSsl || sslRequested)) {
     config.ssl = { ...ssl, rejectUnauthorized: false };
-  } else if (sslRequested && !sslMode) {
+  } else if (urlVerifiesCertificates) {
+    // sslmode=verify-ca / verify-full explicitly ask for certificate verification.
+    config.ssl = { ...ssl, rejectUnauthorized: true };
+  } else if (urlRequestsSsl || sslRequested) {
+    // libpq semantics: sslmode=require (like allow/prefer, ?ssl=true and DATABASE_SSL=1)
+    // asks for an *encrypted* connection, not an *authenticated* one. node-postgres
+    // otherwise verifies against the public trust store and rejects providers that
+    // use private certificate authorities (e.g. Supabase poolers) with
+    // SELF_SIGNED_CERT_IN_CHAIN. Keep verification opt-in via sslmode=verify-ca /
+    // verify-full, DATABASE_SSL_CA, or DATABASE_SSL_REJECT_UNAUTHORIZED=true.
     config.ssl = { ...ssl, rejectUnauthorized: false };
   }
 
@@ -430,6 +472,8 @@ async function initializePostgresStore() {
     }
     await pool.end().catch(() => {});
     pool = null;
+    const tlsHint = TLS_VERIFICATION_ERROR_HINTS[String(error.code)];
+    if (tlsHint) console.error(`PostgreSQL TLS verification failed (${error.code}):`, tlsHint);
     throw error;
   } finally {
     client?.release();
@@ -459,6 +503,7 @@ function storageStatus() {
     return {
       storage: 'unavailable', databaseConfigured: true, ready: false,
       databaseErrorCode: storageInitializationErrorCode || 'DATABASE_CONNECT_FAILED',
+      databaseErrorHint: TLS_VERIFICATION_ERROR_HINTS[storageInitializationErrorCode] || undefined,
     };
   }
   return { storage: 'initializing', databaseConfigured: true, ready: false };

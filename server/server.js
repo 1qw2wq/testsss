@@ -362,6 +362,7 @@ app.use((err, req, res, next) => {
         ? 'The database is still initializing. Please retry shortly.'
         : 'The database connection is unavailable. Check DATABASE_URL in the deployment settings and the server logs.',
       code: storage.databaseErrorCode || 'STORAGE_UNAVAILABLE',
+      ...(storage.databaseErrorHint ? { hint: storage.databaseErrorHint } : {}),
     });
   }
   res.status(err.status || 500).json({ ok: false, error: 'Something went wrong. Please try again.' });

@@ -443,7 +443,9 @@ function registerAdmin(app, ctx) {
           const events = snap.events
             .filter((event) => event.trek === trek.id)
             .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.time || '').localeCompare(String(b.time || '')))
-            .map(({ id, title, date, time, location }) => ({ id, title, date, time, location }));
+            .map(({ id, title, date, time, location, description, url, trek: linkedTrek }) => ({
+              id, title, date, time, location, description, url, trek: linkedTrek,
+            }));
           return { id: trek.id, name: trek.name, days: trek.days, location: trek.location, image: trek.image, seats: trek.seats, taken, left: Math.max(0, trek.seats - taken), waitlisted: rows.filter((r) => r.status === 'waitlisted').length, checkedIn: rows.filter((r) => r.status === 'checked-in').length, events };
         });
       }

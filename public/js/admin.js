@@ -75,6 +75,7 @@
     searchResults: [],
     renderedRoute: null,
     eventRows: [],
+    trekEventRows: [],
     restoreFocus: null,
     loading: false,
   };
@@ -625,8 +626,8 @@
       <span>${esc(t.name)}</span><b>${nfmt(t.taken)}<small style="font:500 15px var(--sans);color:var(--muted)"> / ${nfmt(t.seats)}</small></b>
       <div class="track"><i style="width:${t.seats ? Math.min(100, (t.taken / t.seats) * 100) : 0}%;background:#315b8f"></i></div>
       <p class="kpi-sub">${nfmt(t.left)} open · ${nfmt(t.waitlisted)} waitlisted · ${nfmt(t.checkedIn)} checked in</p>
-      ${(t.events || []).length ? `<div class="trek-linked-events"><p class="eyebrow">Linked events</p>${t.events.map((event) => `<a href="#/events" class="trek-linked-event"><strong>${esc(event.title)}</strong><span>${esc(eventDateLabel(event.date))}${event.time ? ` · ${esc(event.time)}` : ''}${event.location ? ` · ${esc(event.location)}` : ''}</span></a>`).join('')}</div>` : '<p class="kpi-sub">No events linked to this trek.</p>'}
-      <div class="trek-card-links"><button type="button" class="linkish" data-act="filter" data-key="trek" data-value="${attr(t.id)}">View roster →</button><a class="linkish" href="#/events">Manage events →</a></div>
+      ${(t.events || []).length ? `<div class="trek-linked-events"><p class="eyebrow">Linked events</p>${t.events.map((event) => `<div class="trek-linked-event"><div><strong>${esc(event.title)}</strong><span>${esc(eventDateLabel(event.date))}${event.time ? ` · ${esc(event.time)}` : ''}${event.location ? ` · ${esc(event.location)}` : ''}</span></div><div class="trek-event-actions"><button type="button" class="linkish" data-act="edit-trek-event" data-id="${event.id}">Edit</button><button type="button" class="linkish danger-link" data-act="delete-trek-event" data-id="${event.id}" data-title="${attr(event.title)}">Delete</button></div></div>`).join('')}</div>` : '<p class="kpi-sub">No events linked to this trek.</p>'}
+      <div class="trek-card-links"><button type="button" class="linkish" data-act="filter" data-key="trek" data-value="${attr(t.id)}">View roster →</button><button type="button" class="linkish" data-act="add-trek-event" data-trek="${attr(t.id)}">＋ Add event</button><a class="linkish" href="#/events">All events →</a></div>
     </article>`).join('')}</div>`;
   }
 
@@ -703,7 +704,10 @@
           : collection === 'reservations' ? 'Add visitor' : 'Issue pass';
       header = commonPageHead(collection, label, payload.total, add);
       let extra = '';
-      if (collection === 'reservations') extra = trekCapacityCards(payload.capacity || []);
+      if (collection === 'reservations') {
+        state.trekEventRows = (payload.capacity || []).flatMap((trek) => trek.events || []);
+        extra = trekCapacityCards(payload.capacity || []);
+      }
       if (collection === 'pledges') extra = bookDriveSummary(payload.books);
       const content = `${header}${extra}${toolbar(collection, route, payload)}<div class="print-only">Hi World Club · ${esc(ROUTES[route.view].title)} · printed ${esc(niceDate(new Date().toISOString(), { long: true }))}</div>
         ${payload.items.length ? tableFor(collection, payload.items, route) : tableFor(collection, [], route)}${pager(payload.total, payload.page, payload.pages)}${bulkToolbar(collection)}`;
@@ -976,14 +980,15 @@
     $('#add-name', els.modalCard)?.focus({ preventScroll: true });
   }
 
-  function eventModal(event = null) {
+  function eventModal(event = null, defaultTrek = '') {
     const editing = !!event;
+    const selectedTrek = event?.trek || defaultTrek;
     els.modalCard.innerHTML = `<p class="eyebrow">Club desk · public listing</p><h2>${editing ? 'Edit event' : 'Add an event'}</h2><p class="dialog-lead">Events appear on the public calendar. Link one to Alibaba HQ or Refinery Island to show it in that trek window too.</p>
       <form data-form="club-event" data-id="${editing ? event.id : ''}" novalidate><div class="form-grid">
         <div class="field full"><label for="event-title">Event title *</label><input id="event-title" name="title" maxlength="100" required value="${attr(event?.title || '')}" placeholder="Community book swap" /></div>
         <div class="field"><label for="event-date">Date *</label><input id="event-date" name="date" type="date" required value="${attr(event?.date || '')}" /></div>
         <div class="field"><label for="event-time">Start time</label><input id="event-time" name="time" type="time" value="${attr(event?.time || '')}" /><small class="sub">Hangzhou local time (UTC+8)</small></div>
-        <div class="field"><label for="event-trek">Show in</label><select id="event-trek" name="trek"><option value="" ${!event?.trek ? 'selected' : ''}>General calendar only</option><option value="alibaba" ${event?.trek === 'alibaba' ? 'selected' : ''}>Alibaba HQ · Hangzhou</option><option value="refinery" ${event?.trek === 'refinery' ? 'selected' : ''}>Private Refinery Island</option></select><small class="sub">Linked events also appear in the matching trek window.</small></div>
+        <div class="field"><label for="event-trek">Show in</label><select id="event-trek" name="trek"><option value="" ${!selectedTrek ? 'selected' : ''}>General calendar only</option><option value="alibaba" ${selectedTrek === 'alibaba' ? 'selected' : ''}>Alibaba HQ · Hangzhou</option><option value="refinery" ${selectedTrek === 'refinery' ? 'selected' : ''}>Private Refinery Island</option></select><small class="sub">Linked events also appear in the matching trek window.</small></div>
         <div class="field full"><label for="event-location">Location</label><input id="event-location" name="location" maxlength="120" value="${attr(event?.location || '')}" placeholder="School library · Hangzhou" /></div>
         <div class="field full"><label for="event-description">Description</label><textarea id="event-description" name="description" maxlength="600" rows="4" placeholder="What should attendees know?">${esc(event?.description || '')}</textarea></div>
         <div class="field full"><label for="event-url">Event link <span class="sub-inline">(optional, HTTPS)</span></label><input id="event-url" name="url" type="url" maxlength="500" value="${attr(event?.url || '')}" placeholder="https://…" /></div>
@@ -1087,7 +1092,8 @@
       await api(id ? `${EVENTS_URL}/${id}` : EVENTS_URL, { method: id ? 'PATCH' : 'POST', body: payload });
       closeModal();
       toast(id ? 'Event updated.' : 'Event published.');
-      await renderEvents();
+      if (cleanHash().view === 'events') await renderEvents();
+      else await renderRoute({ quiet: true });
       updateBadges().catch(() => {});
     } catch (err) {
       showFormError(form, err.message);
@@ -1110,14 +1116,15 @@
     }
   }
 
-  async function deleteClubEvent(id) {
-    const event = state.eventRows?.find((row) => row.id === id);
-    const ok = await askConfirm('Delete this event?', `“${event?.title || 'This event'}” will be removed from the desk and public homepage. Its removal remains in the activity log.`, 'Delete event', true);
+  async function deleteClubEvent(id, suppliedEvent = null) {
+    const event = suppliedEvent || state.eventRows?.find((row) => row.id === id) || state.trekEventRows?.find((row) => row.id === id);
+    const ok = await askConfirm('Delete this event?', `“${event?.title || 'This event'}” will be removed from the desk, public homepage, and trek schedule. Its removal remains in the activity log.`, 'Delete event', true);
     if (!ok) return;
     try {
       await api(`${EVENTS_URL}/${id}`, { method: 'DELETE' });
       toast('Event deleted.');
-      await renderEvents();
+      if (cleanHash().view === 'events') await renderEvents();
+      else await renderRoute({ quiet: true });
     } catch (err) { toast(err.message); }
   }
 
@@ -1362,6 +1369,14 @@
       addModal(target.dataset.type);
     } else if (action === 'add-event') {
       eventModal();
+    } else if (action === 'add-trek-event') {
+      eventModal(null, target.dataset.trek);
+    } else if (action === 'edit-trek-event') {
+      const eventRow = state.trekEventRows?.find((row) => row.id === Number(target.dataset.id));
+      if (eventRow) eventModal(eventRow);
+    } else if (action === 'delete-trek-event') {
+      const eventRow = state.trekEventRows?.find((row) => row.id === Number(target.dataset.id));
+      await deleteClubEvent(Number(target.dataset.id), eventRow);
     } else if (action === 'edit-event') {
       const id = Number(target.dataset.id);
       const eventRow = state.eventRows?.find((row) => row.id === id);

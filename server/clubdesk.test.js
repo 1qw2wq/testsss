@@ -191,7 +191,8 @@ test('club desk auth, live totals, status actions, and trek capacity', async (t)
       const refineryDesk = trekDesk.data.capacity.find((trek) => trek.id === 'refinery');
       assert.deepEqual(refineryDesk.events, [{
         id: eventId, title: 'Spring book exchange', date: '2099-02-17',
-        time: '14:30', location: 'School library',
+        time: '14:30', location: 'School library', description: 'Bring a book and meet the club.',
+        url: 'https://example.org/book-swap', trek: 'refinery',
       }]);
 
       const second = await request(base, '/api/admin/events', {

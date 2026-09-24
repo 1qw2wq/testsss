@@ -27,7 +27,8 @@ Useful environment variables:
 | `ADMIN_TOKEN` | Club-desk key. Set a private value outside local development. |
 | `DATABASE_URL` | PostgreSQL connection string. When present, PostgreSQL is the source of truth. |
 | `DATABASE_SSL` | Set to `1` if the provider requires TLS but the connection string does not enable it. |
-| `DATABASE_SSL_REJECT_UNAUTHORIZED` | Set to `true` to verify the TLS certificate when using `DATABASE_SSL`. |
+| `DATABASE_SSL_REJECT_UNAUTHORIZED` | Set to `true` to verify the TLS certificate; set to `false` only if you intentionally accept encrypted TLS without server-certificate verification. |
+| `DATABASE_SSL_CA` | Optional PEM root certificate for verifying a provider's private CA; literal `\n` newlines are accepted. |
 | `PGPOOL_MAX` | Maximum PostgreSQL pool size per instance (default `1` on Vercel, `5` elsewhere). |
 | `DB_PATH` | JSON-store path and one-time PostgreSQL bootstrap source (default `data/club.json`; Vercel fallback is `/tmp/hiworld-club.json`). |
 | `SEED_DEMO` | Set to `0` to start an empty store; otherwise an empty store can be seeded with sample data. |
@@ -41,6 +42,8 @@ With `DATABASE_URL` set, the app creates a PostgreSQL table named `hiworld_club_
 The JSONB approach keeps the existing data model intact while making PostgreSQL the durable backend. On the first connection, if the PostgreSQL table has no state row, the app bootstraps it from `DB_PATH` (or the normal empty/demo seed). After that, PostgreSQL is authoritative; updating or redeploying the static UI does not clear or replace the database row. If `DATABASE_URL` is not configured, the app uses the local JSON store instead.
 
 `GET /api/health` remains reachable during database startup and reports `storage: "postgres"`, `"json"`, `"initializing"`, or `"unavailable"`; a failed PostgreSQL connection includes a safe error code without exposing credentials. On Vercel, confirm it reports `postgres` before clearing or editing live records; `json` means the app is using ephemeral `/tmp` storage and writes may not persist consistently between serverless instances. For Supabase, set `DATABASE_URL` to the project’s transaction-pooler PostgreSQL URI (not `SUPABASE_URL` or an API key), then redeploy.
+
+With node-postgres, `sslmode=require` enables TLS and currently also verifies the server certificate. A provider's private CA can therefore cause `SELF_SIGNED_CERT_IN_CHAIN`. The preferred fix is to set `DATABASE_SSL_CA` to the provider root certificate (Supabase provides it in Database settings) and `DATABASE_SSL_REJECT_UNAUTHORIZED=true`; the app merges this CA into the driver settings even when the URI contains SSL parameters. If you intentionally want encrypted TLS without certificate verification, set `DATABASE_SSL_REJECT_UNAUTHORIZED=false` or add `uselibpqcompat=true` to the URI query. TLS stays enabled, but that choice does not authenticate the server. Avoid the process-wide `NODE_TLS_REJECT_UNAUTHORIZED=0` setting.
 
 ## Club desk and book totals
 
@@ -72,7 +75,8 @@ Set these in Vercel → Project → Settings → Environment Variables:
 | `ADMIN_TOKEN` | **Yes** | Long random private key for the club desk. |
 | `DATABASE_URL` | **Yes for durable data** | PostgreSQL provider connection string. Use the provider’s pooled/serverless connection URL when it supplies one. |
 | `DATABASE_SSL` | Provider-dependent | Set to `1` if the provider requires TLS and the URL does not specify it. |
-| `DATABASE_SSL_REJECT_UNAUTHORIZED` | Optional | Set to `true` when certificate verification is supported/configured. |
+| `DATABASE_SSL_REJECT_UNAUTHORIZED` | Optional | Set to `true` to verify the server certificate; `false` allows TLS without certificate verification. |
+| `DATABASE_SSL_CA` | Optional | PEM root certificate for verifying a private provider CA. |
 | `PGPOOL_MAX` | Optional | Set a modest per-instance pool size for serverless deployments. |
 | `SEED_DEMO` | Optional | Set to `0` to initialize without sample data. |
 

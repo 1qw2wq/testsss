@@ -355,20 +355,42 @@ function initializeFileStore() {
   }
 }
 
+function postgresConnectionConfig(connectionString, env = process.env) {
+  const { parse } = require('pg-connection-string');
+  const config = parse(connectionString);
+  const sslMode = String(config.sslmode || '').toLowerCase();
+  const ssl = config.ssl && typeof config.ssl === 'object' ? config.ssl : {};
+  const sslCa = String(env.DATABASE_SSL_CA || '').replace(/\\n/g, '\n').trim();
+  const verifyCertificates = env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true';
+  const allowUnverified = env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'false';
+  const sslRequested = /^(1|true|require)$/i.test(String(env.DATABASE_SSL || ''));
+  const urlRequestsSsl = (!!sslMode && sslMode !== 'disable') || config.ssl === true
+    || (config.ssl && typeof config.ssl === 'object');
+
+  if (sslCa) {
+    // A provider root certificate lets us validate private CA chains without disabling TLS checks.
+    config.ssl = { ...ssl, ca: sslCa, rejectUnauthorized: true };
+  } else if (verifyCertificates) {
+    config.ssl = { ...ssl, rejectUnauthorized: true };
+  } else if (allowUnverified && (urlRequestsSsl || sslRequested)) {
+    config.ssl = { ...ssl, rejectUnauthorized: false };
+  } else if (sslRequested && !sslMode) {
+    config.ssl = { ...ssl, rejectUnauthorized: false };
+  }
+
+  return config;
+}
+
 async function initializePostgresStore() {
   const { Pool } = require('pg');
-  const ssl = /^(1|true|require)$/i.test(String(process.env.DATABASE_SSL || ''))
-    ? { rejectUnauthorized: process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true' }
-    : undefined;
   const configuredPoolMax = Number(process.env.PGPOOL_MAX);
   const defaultPoolMax = isServerless ? 1 : 5;
   pool = new Pool({
-    connectionString: DATABASE_URL,
+    ...postgresConnectionConfig(DATABASE_URL),
     max: Number.isInteger(configuredPoolMax) && configuredPoolMax >= 1
       ? Math.min(20, configuredPoolMax) : defaultPoolMax,
     connectionTimeoutMillis: 10000,
     idleTimeoutMillis: 30000,
-    ...(ssl ? { ssl } : {}),
   });
   pool.on('error', (error) => console.error('PostgreSQL idle client error:', error.message));
 
@@ -519,4 +541,7 @@ const store = {
   }),
 };
 
-module.exports = { stmts, store, COLLECTIONS, STORE_COLLECTIONS, DEFAULT_BOOK_GOAL, DEFAULT_BOOK_BASELINE };
+module.exports = {
+  stmts, store, COLLECTIONS, STORE_COLLECTIONS, DEFAULT_BOOK_GOAL, DEFAULT_BOOK_BASELINE,
+  postgresConnectionConfig,
+};

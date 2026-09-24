@@ -51,7 +51,7 @@ Certificate verification stays available when you ask for it:
 - The preferred, strictest option is `DATABASE_SSL_CA` set to the provider's root PEM certificate (Supabase provides it in Database settings); the app merges this CA into the driver settings even when the URI contains SSL parameters, and verifies against it.
 - `sslmode=disable` in the URI keeps TLS off entirely, and `DATABASE_SSL_REJECT_UNAUTHORIZED=false` intentionally selects encrypted-but-unverified TLS.
 
-If strict verification cannot be completed, `/api/health` and the API error responses include the TLS error code plus a `hint` explaining which setting to adjust. Encrypted-but-unverified TLS still protects against passive eavesdropping but does not authenticate the server, so prefer `DATABASE_SSL_CA` when the provider offers a root certificate. Avoid the process-wide `NODE_TLS_REJECT_UNAUTHORIZED=0` setting.
+If strict verification cannot be completed (for example a mismatched or missing `DATABASE_SSL_CA`), the app does not stay down: it retries the connection once with encrypted-but-unverified TLS and keeps serving. The downgrade is disclosed, never silent — `/api/health` reports it as `databaseTLS: { verification: "encrypted-unverified", fallbackFrom: "<setting that requested verification>" }`, the API 503 error includes a `tls` field, and the server logs a warning. Set `DATABASE_SSL_CA` to the provider's correct root certificate to restore certificate verification. Encrypted-but-unverified TLS still protects against passive eavesdropping but does not authenticate the server. Avoid the process-wide `NODE_TLS_REJECT_UNAUTHORIZED=0` setting.
 
 ## Club desk and book totals
 

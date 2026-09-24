@@ -363,6 +363,7 @@ app.use((err, req, res, next) => {
         : 'The database connection is unavailable. Check DATABASE_URL in the deployment settings and the server logs.',
       code: storage.databaseErrorCode || 'STORAGE_UNAVAILABLE',
       ...(storage.databaseErrorHint ? { hint: storage.databaseErrorHint } : {}),
+      ...(storage.databaseTLS ? { tls: storage.databaseTLS } : {}),
     });
   }
   res.status(err.status || 500).json({ ok: false, error: 'Something went wrong. Please try again.' });

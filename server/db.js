@@ -147,6 +147,7 @@ function prepareInitialState(source) {
 let pool = null;
 let data = blank();
 let operationQueue = Promise.resolve();
+let tlsRuntimeStatus = null;
 
 function serialize(operation) {
   const pending = operationQueue.then(operation, operation);
@@ -384,7 +385,7 @@ const TLS_VERIFICATION_ERROR_HINTS = {
     + 'settings to use encrypted TLS.',
 };
 
-function postgresConnectionConfig(connectionString, env = process.env) {
+function resolveTlsSettings(connectionString, env = process.env) {
   const { parse } = require('pg-connection-string');
   const config = parse(connectionString);
   const sslMode = String(config.sslmode || '').toLowerCase();
@@ -396,19 +397,25 @@ function postgresConnectionConfig(connectionString, env = process.env) {
   const urlRequestsSsl = (!!sslMode && sslMode !== 'disable') || config.ssl === true
     || (config.ssl && typeof config.ssl === 'object');
   const urlVerifiesCertificates = sslMode === 'verify-ca' || sslMode === 'verify-full';
+  let requestedBy = 'none';
 
   if (sslMode === 'disable') {
     // The connection string explicitly opts out of TLS; nothing re-enables it.
+    requestedBy = 'sslmode=disable';
     config.ssl = false;
   } else if (sslCa) {
     // A provider root certificate lets us validate private CA chains without disabling TLS checks.
+    requestedBy = 'DATABASE_SSL_CA';
     config.ssl = { ...ssl, ca: sslCa, rejectUnauthorized: true };
   } else if (verifyCertificates) {
+    requestedBy = 'DATABASE_SSL_REJECT_UNAUTHORIZED=true';
     config.ssl = { ...ssl, rejectUnauthorized: true };
   } else if (allowUnverified && (urlRequestsSsl || sslRequested)) {
+    requestedBy = 'DATABASE_SSL_REJECT_UNAUTHORIZED=false';
     config.ssl = { ...ssl, rejectUnauthorized: false };
   } else if (urlVerifiesCertificates) {
     // sslmode=verify-ca / verify-full explicitly ask for certificate verification.
+    requestedBy = `sslmode=${sslMode}`;
     config.ssl = { ...ssl, rejectUnauthorized: true };
   } else if (urlRequestsSsl || sslRequested) {
     // libpq semantics: sslmode=require (like allow/prefer, ?ssl=true and DATABASE_SSL=1)
@@ -417,67 +424,120 @@ function postgresConnectionConfig(connectionString, env = process.env) {
     // use private certificate authorities (e.g. Supabase poolers) with
     // SELF_SIGNED_CERT_IN_CHAIN. Keep verification opt-in via sslmode=verify-ca /
     // verify-full, DATABASE_SSL_CA, or DATABASE_SSL_REJECT_UNAUTHORIZED=true.
+    requestedBy = sslMode ? `sslmode=${sslMode}` : (config.ssl === true ? 'ssl=true' : 'DATABASE_SSL=1');
     config.ssl = { ...ssl, rejectUnauthorized: false };
   }
 
-  return config;
+  const verification = !config.ssl
+    ? 'off'
+    : (config.ssl.rejectUnauthorized === false ? 'encrypted-unverified' : 'verified');
+  return { config, verification, requestedBy };
 }
+
+function postgresConnectionConfig(connectionString, env = process.env) {
+  return resolveTlsSettings(connectionString, env).config;
+}
+
+const TLS_VERIFICATION_ERROR_CODES = new Set(Object.keys(TLS_VERIFICATION_ERROR_HINTS));
 
 async function initializePostgresStore() {
   const { Pool } = require('pg');
   const configuredPoolMax = Number(process.env.PGPOOL_MAX);
   const defaultPoolMax = isServerless ? 1 : 5;
-  pool = new Pool({
-    ...postgresConnectionConfig(DATABASE_URL),
+  const tls = resolveTlsSettings(DATABASE_URL);
+  tlsRuntimeStatus = { verification: tls.verification, requestedBy: tls.requestedBy };
+
+  const poolOptions = (ssl) => ({
+    ...tls.config,
+    ...(ssl ? { ssl } : {}),
     max: Number.isInteger(configuredPoolMax) && configuredPoolMax >= 1
       ? Math.min(20, configuredPoolMax) : defaultPoolMax,
     connectionTimeoutMillis: 10000,
     idleTimeoutMillis: 30000,
   });
-  pool.on('error', (error) => console.error('PostgreSQL idle client error:', error.message));
 
-  let client;
-  try {
-    client = await pool.connect();
-    await client.query(`CREATE TABLE IF NOT EXISTS ${TABLE_NAME} (
-      id SMALLINT PRIMARY KEY CHECK (id = 1),
-      state JSONB NOT NULL,
-      revision BIGINT NOT NULL DEFAULT 1,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )`);
-    await client.query('BEGIN');
-    const existing = await client.query(`SELECT state FROM ${TABLE_NAME} WHERE id = 1 FOR UPDATE`);
-    if (!existing.rows.length) {
-      const bootstrap = prepareInitialState(loadFile());
-      await client.query(
-        `INSERT INTO ${TABLE_NAME} (id, state) VALUES (1, $1::jsonb) ON CONFLICT (id) DO NOTHING`,
-        [JSON.stringify(bootstrap)],
-      );
+  // Runs the full bootstrap sequence (create table, seed row, load state) on a fresh
+  // pool. Returns the pool on success; ends it and throws on failure.
+  const runBootstrap = async (ssl) => {
+    const attemptPool = new Pool(poolOptions(ssl));
+    attemptPool.on('error', (error) => console.error('PostgreSQL idle client error:', error.message));
+    let client;
+    try {
+      client = await attemptPool.connect();
+      await client.query(`CREATE TABLE IF NOT EXISTS ${TABLE_NAME} (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        state JSONB NOT NULL,
+        revision BIGINT NOT NULL DEFAULT 1,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+      await client.query('BEGIN');
+      const found = await client.query(`SELECT state FROM ${TABLE_NAME} WHERE id = 1 FOR UPDATE`);
+      if (!found.rows.length) {
+        const bootstrap = prepareInitialState(loadFile());
+        await client.query(
+          `INSERT INTO ${TABLE_NAME} (id, state) VALUES (1, $1::jsonb) ON CONFLICT (id) DO NOTHING`,
+          [JSON.stringify(bootstrap)],
+        );
+      }
+      const result = await client.query(`SELECT state FROM ${TABLE_NAME} WHERE id = 1 FOR UPDATE`);
+      const raw = result.rows[0].state;
+      data = migrate(raw);
+      if (JSON.stringify(data) !== JSON.stringify(raw)) {
+        await client.query(`UPDATE ${TABLE_NAME} SET state = $1::jsonb, revision = revision + 1, updated_at = NOW() WHERE id = 1`, [JSON.stringify(data)]);
+      }
+      await client.query('COMMIT');
+      return attemptPool;
+    } catch (error) {
+      if (client) {
+        try { await client.query('ROLLBACK'); } catch {}
+      }
+      await attemptPool.end().catch(() => {});
+      throw error;
+    } finally {
+      client?.release();
     }
-    const result = await client.query(`SELECT state FROM ${TABLE_NAME} WHERE id = 1 FOR UPDATE`);
-    const raw = result.rows[0].state;
-    data = migrate(raw);
-    if (JSON.stringify(data) !== JSON.stringify(raw)) {
-      await client.query(`UPDATE ${TABLE_NAME} SET state = $1::jsonb, revision = revision + 1, updated_at = NOW() WHERE id = 1`, [JSON.stringify(data)]);
-    }
-    await client.query('COMMIT');
-    storageInitializationState = 'ready';
-    storageInitializationErrorCode = '';
-  } catch (error) {
-    storageInitializationState = 'error';
-    storageInitializationErrorCode = typeof error.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(error.code)
-      ? error.code : 'DATABASE_CONNECT_FAILED';
-    if (client) {
-      try { await client.query('ROLLBACK'); } catch {}
-    }
-    await pool.end().catch(() => {});
-    pool = null;
-    const tlsHint = TLS_VERIFICATION_ERROR_HINTS[String(error.code)];
-    if (tlsHint) console.error(`PostgreSQL TLS verification failed (${error.code}):`, tlsHint);
-    throw error;
-  } finally {
-    client?.release();
+  };
+
+  // Strict verification is an explicit operator choice, but providers with private
+  // certificate authorities fail it unless the matching root CA was supplied. Rather
+  // than keeping the whole app down, retry once with encrypted-but-unverified TLS
+  // and disclose the downgrade via /api/health (databaseTLS.fallbackFrom) and logs.
+  const attempts = [null];
+  if (tls.config.ssl && tls.config.ssl.rejectUnauthorized !== false) {
+    attempts.push({ ...tls.config.ssl, rejectUnauthorized: false });
   }
+
+  let lastError;
+  for (const [index, ssl] of attempts.entries()) {
+    try {
+      pool = await runBootstrap(ssl);
+      tlsRuntimeStatus = index === 0
+        ? { verification: tls.verification, requestedBy: tls.requestedBy }
+        : { verification: 'encrypted-unverified', requestedBy: tls.requestedBy, fallbackFrom: tls.requestedBy };
+      storageInitializationState = 'ready';
+      storageInitializationErrorCode = '';
+      if (index > 0) {
+        console.warn(
+          `PostgreSQL TLS verification failed; connected with encrypted-but-unverified TLS instead `
+          + `(verification was requested by ${tls.requestedBy}). Set DATABASE_SSL_CA to the provider root `
+          + `certificate to restore certificate verification.`,
+        );
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      const tlsHint = TLS_VERIFICATION_ERROR_HINTS[String(error.code)];
+      if (index === 0 && tlsHint) {
+        console.error(`PostgreSQL TLS verification failed (${error.code}):`, tlsHint);
+      }
+      if (index === 0 && !TLS_VERIFICATION_ERROR_CODES.has(String(error.code))) break;
+    }
+  }
+
+  storageInitializationState = 'error';
+  storageInitializationErrorCode = typeof lastError.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(lastError.code)
+    ? lastError.code : 'DATABASE_CONNECT_FAILED';
+  throw lastError;
 }
 
 if (DATABASE_URL) {
@@ -497,16 +557,19 @@ if (DATABASE_URL) {
 function storageStatus() {
   if (!DATABASE_URL) return { storage: 'json', databaseConfigured: false, ready: true };
   if (storageInitializationState === 'ready' && pool) {
-    return { storage: 'postgres', databaseConfigured: true, ready: true };
+    return { storage: 'postgres', databaseConfigured: true, ready: true,
+      ...(tlsRuntimeStatus ? { databaseTLS: tlsRuntimeStatus } : {}) };
   }
   if (storageInitializationState === 'error') {
     return {
       storage: 'unavailable', databaseConfigured: true, ready: false,
       databaseErrorCode: storageInitializationErrorCode || 'DATABASE_CONNECT_FAILED',
       databaseErrorHint: TLS_VERIFICATION_ERROR_HINTS[storageInitializationErrorCode] || undefined,
+      ...(tlsRuntimeStatus ? { databaseTLS: tlsRuntimeStatus } : {}),
     };
   }
-  return { storage: 'initializing', databaseConfigured: true, ready: false };
+  return { storage: 'initializing', databaseConfigured: true, ready: false,
+    ...(tlsRuntimeStatus ? { databaseTLS: tlsRuntimeStatus } : {}) };
 }
 
 const store = {

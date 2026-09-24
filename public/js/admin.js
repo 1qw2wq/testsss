@@ -426,7 +426,7 @@
     return `
       <div class="hero-row">
         <div><p class="eyebrow">A quiet room for the work</p><h2>Good to see you.</h2><p class="lede">A live read on the club — what is moving, what needs a nudge, and where the next seat opens.</p></div>
-        <div class="page-actions"><button type="button" class="btn btn-sm" data-act="refresh">↻ Refresh desk</button><a class="btn btn-ink btn-sm" href="${routeHref('applications', { status: 'new' })}">Review new <span aria-hidden="true">→</span></a></div>
+        <div class="page-actions"><button type="button" class="btn btn-sm btn-danger" data-act="clear-all">Clear all data</button><button type="button" class="btn btn-sm" data-act="refresh">↻ Refresh desk</button><a class="btn btn-ink btn-sm" href="${routeHref('applications', { status: 'new' })}">Review new <span aria-hidden="true">→</span></a></div>
       </div>
       <section class="kpi-grid" aria-label="Club totals">
         <a class="kpi" href="${routeHref('pledges')}"><p class="kpi-label">Books toward goal</p><p class="kpi-num">${nfmt(b.pledged)}<small>/ ${nfmt(b.goal)}</small></p>${sparkline(data.series.pledges)}<div class="meter"><i style="width:${Math.min(100, (b.pledged / b.goal) * 100)}%"></i></div>${deltaText(b.delta, 'books')}</a>
@@ -625,7 +625,8 @@
       <span>${esc(t.name)}</span><b>${nfmt(t.taken)}<small style="font:500 15px var(--sans);color:var(--muted)"> / ${nfmt(t.seats)}</small></b>
       <div class="track"><i style="width:${t.seats ? Math.min(100, (t.taken / t.seats) * 100) : 0}%;background:#315b8f"></i></div>
       <p class="kpi-sub">${nfmt(t.left)} open · ${nfmt(t.waitlisted)} waitlisted · ${nfmt(t.checkedIn)} checked in</p>
-      <button type="button" class="linkish" data-act="filter" data-key="trek" data-value="${attr(t.id)}">View roster →</button>
+      ${(t.events || []).length ? `<div class="trek-linked-events"><p class="eyebrow">Linked events</p>${t.events.map((event) => `<a href="#/events" class="trek-linked-event"><strong>${esc(event.title)}</strong><span>${esc(eventDateLabel(event.date))}${event.time ? ` · ${esc(event.time)}` : ''}${event.location ? ` · ${esc(event.location)}` : ''}</span></a>`).join('')}</div>` : '<p class="kpi-sub">No events linked to this trek.</p>'}
+      <div class="trek-card-links"><button type="button" class="linkish" data-act="filter" data-key="trek" data-value="${attr(t.id)}">View roster →</button><a class="linkish" href="#/events">Manage events →</a></div>
     </article>`).join('')}</div>`;
   }
 

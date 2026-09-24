@@ -187,6 +187,12 @@ test('club desk auth, live totals, status actions, and trek capacity', async (t)
       assert.ok(search.data.results.some((result) => result.type === 'event' && result.href === '#/events'));
       assert.equal('created_at' in publicList.data.events[0], false);
       assert.equal('updated_at' in publicList.data.events[0], false);
+      const trekDesk = await request(base, '/api/admin/reservations', { admin: true });
+      const refineryDesk = trekDesk.data.capacity.find((trek) => trek.id === 'refinery');
+      assert.deepEqual(refineryDesk.events, [{
+        id: eventId, title: 'Spring book exchange', date: '2099-02-17',
+        time: '14:30', location: 'School library',
+      }]);
 
       const second = await request(base, '/api/admin/events', {
         method: 'POST', admin: true,

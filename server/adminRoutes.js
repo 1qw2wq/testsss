@@ -440,7 +440,11 @@ function registerAdmin(app, ctx) {
         body.capacity = TREKS.map((trek) => {
           const rows = snap.reservations.filter((r) => r.trek === trek.id);
           const taken = rows.filter((r) => TAKES_SEAT.has(r.status)).length;
-          return { id: trek.id, name: trek.name, days: trek.days, location: trek.location, image: trek.image, seats: trek.seats, taken, left: Math.max(0, trek.seats - taken), waitlisted: rows.filter((r) => r.status === 'waitlisted').length, checkedIn: rows.filter((r) => r.status === 'checked-in').length };
+          const events = snap.events
+            .filter((event) => event.trek === trek.id)
+            .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.time || '').localeCompare(String(b.time || '')))
+            .map(({ id, title, date, time, location }) => ({ id, title, date, time, location }));
+          return { id: trek.id, name: trek.name, days: trek.days, location: trek.location, image: trek.image, seats: trek.seats, taken, left: Math.max(0, trek.seats - taken), waitlisted: rows.filter((r) => r.status === 'waitlisted').length, checkedIn: rows.filter((r) => r.status === 'checked-in').length, events };
         });
       }
       if (collection === 'pledges') {

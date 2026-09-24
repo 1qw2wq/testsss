@@ -557,6 +557,13 @@ details.edit summary { cursor: pointer; font-weight: 600; }
 .admin-event-location b { margin-right: 4px; color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
 .admin-event-card > a { align-self: flex-start; margin-top: 2px; }
 .admin-event-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 14px; margin-top: 12px; border-top: 1px solid var(--line); }
+.trek-linked-events { margin: 12px 0 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.trek-linked-events .eyebrow { margin-bottom: 5px; }
+.trek-linked-event { display: block; padding: 7px 0; color: var(--ink); text-decoration: none; }
+.trek-linked-event + .trek-linked-event { border-top: 1px solid var(--line); }
+.trek-linked-event strong { display: block; font-size: 13px; }
+.trek-linked-event span { display: block; margin-top: 2px; font: 500 11px/1.4 var(--sans); letter-spacing: 0; text-transform: none; }
+.trek-card-links { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 @media (max-width: 680px) {
   .admin-event-grid { grid-template-columns: 1fr; }
   .book-heading { align-items: flex-start; }

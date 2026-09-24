@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Events Calendar — Hi World Club</title>
+  <meta name="description" content="See upcoming Hi World Club events in Hangzhou: treks, workshops, book drives, and community gatherings." />
+  <meta name="theme-color" content="#f3f1ec" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/styles.css?v=4" />
+  <link rel="stylesheet" href="/css/events.css?v=1" />
+</head>
+<body class="events-page">
+  <header class="nav" id="nav">
+    <a href="/#top" class="brand" aria-label="Hi World Club home"><span class="brand-mark" aria-hidden="true"></span>Hi World Club</a>
+    <nav class="nav-links" id="navLinks" aria-label="Primary">
+      <a href="/events" aria-current="page">Events</a>
+      <a href="/#moments">Moments</a>
+      <a href="/#pillars">Pillars</a>
+      <a href="/#top">Home</a>
+      <a class="btn btn-ink btn-sm" href="/#top">Explore the club</a>
+    </nav>
+    <button class="burger" id="burger" aria-label="Open menu" aria-expanded="false" aria-controls="navLinks"><span></span><span></span><span></span></button>
+  </header>
+
+  <main>
+    <section class="calendar-hero" aria-labelledby="calendarTitle">
+      <div class="calendar-hero-glow" aria-hidden="true"></div>
+      <div class="calendar-hero-copy">
+        <p class="hero-eyebrow"><span class="pulse" aria-hidden="true"></span>Hi World Club · Hangzhou</p>
+        <h1 id="calendarTitle">Meet us <em>out there.</em></h1>
+        <p class="calendar-lead">A good question is better in person. Find your next trek, workshop, or book-drive shift—and save a little room for the unexpected.</p>
+        <a class="btn btn-ink btn-lg" href="/#moments">See what we do <span aria-hidden="true">↗</span></a>
+      </div>
+      <div class="calendar-hero-stamp" aria-hidden="true"><span>Curiosity<br />in good<br />company</span><i>HW·24</i></div>
+      <div class="calendar-hero-foot" aria-hidden="true"><span>FIELD NOTES / 01</span><span>LEARN · BUILD · GIVE</span></div>
+    </section>
+
+    <section class="calendar-main" aria-labelledby="upcomingTitle">
+      <div class="calendar-heading">
+        <div>
+          <p class="events-eyebrow">The club calendar</p>
+          <h2 id="upcomingTitle">Upcoming gatherings</h2>
+          <p class="calendar-summary" id="calendarSummary">Loading the latest events…</p>
+        </div>
+        <span class="events-live"><i aria-hidden="true"></i> Updated from the club desk</span>
+      </div>
+
+      <div class="calendar-status" id="calendarStatus" role="status" aria-live="polite">Loading upcoming events…</div>
+      <div class="calendar-months" id="calendarMonths" aria-live="polite" aria-relevant="additions text"></div>
+
+      <aside class="calendar-note">
+        <span class="calendar-note-mark" aria-hidden="true">✳</span>
+        <div><strong>Want to help shape what’s next?</strong><p>Join the club and tell us what you’d like to explore.</p></div>
+        <a href="/#top">Meet Hi World Club <span aria-hidden="true">↗</span></a>
+      </aside>
+    </section>
+  </main>
+
+  <footer class="site-foot calendar-footer">
+    <a href="/#top" class="brand"><span class="brand-mark" aria-hidden="true"></span>Hi World Club</a>
+    <p class="foot-mid">One part industry immersion. One part hard skills. One part giving back.</p>
+    <a class="btn btn-ink btn-sm" href="/#top">Back to the club</a>
+  </footer>
+
+  <script src="/js/events.js" defer></script>
+</body>
+</html>

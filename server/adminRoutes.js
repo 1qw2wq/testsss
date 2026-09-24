@@ -68,7 +68,8 @@ function trendDays(count) {
 }
 
 function buildOverview(snap, ctx) {
-  const { TREKS, GENRES, INTERESTS, TRACKS } = ctx;
+  const { getTreks, GENRES, INTERESTS, TRACKS } = ctx;
+  const TREKS = getTreks();
   const BASE_BOOKS = store.bookBaseline();
   const BOOK_GOAL = store.bookGoal();
   const { applications, pledges, passes, reservations, activity } = snap;
@@ -114,7 +115,7 @@ function buildOverview(snap, ctx) {
   const tracks = Object.fromEntries([...TRACKS].map((track) => [track, 0]));
   for (const pass of passes) if (pass.status !== 'revoked' && tracks[pass.track] != null) tracks[pass.track]++;
 
-  const treks = TREKS.map((trek) => {
+  const treks = getTreks().map((trek) => {
     const rows = reservations.filter((r) => r.trek === trek.id);
     const taken = rows.filter((r) => TAKES_SEAT.has(r.status)).length;
     return {
@@ -195,7 +196,7 @@ function listCollection(collection, req) {
     for (const row of rows) for (const item of row.interests || []) if (facets.interest[item] != null) facets.interest[item]++;
   }
   if (collection === 'reservations') {
-    facets.trek = { alibaba: 0, refinery: 0 };
+    facets.trek = Object.fromEntries([...new Set(searched.map((row) => row.trek).filter(Boolean))].map((id) => [id, 0]));
     for (const row of searched) if (facets.trek[row.trek] != null) facets.trek[row.trek]++;
   }
   if (collection === 'passes') {
@@ -235,9 +236,9 @@ function activityFor(collection, row, previous, patch) {
 }
 
 function registerAdmin(app, ctx) {
-  const { requireAdmin, clean, isNonEmpty, TREKS, GENRES, TRACKS, INTERESTS } = ctx;
+  const { requireAdmin, clean, isNonEmpty, getTreks, GENRES, TRACKS, INTERESTS } = ctx;
   const asyncRoute = ctx.asyncRoute || ((handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next));
-  const overviewCtx = { TREKS, GENRES, TRACKS, INTERESTS };
+  const overviewCtx = { getTreks, GENRES, TRACKS, INTERESTS };
   const notFound = (res) => res.status(404).json({ ok: false, error: 'Not found' });
   const rowFor = (collection, id) => store.snapshot()[collection].find((row) => row.id === Number(id));
 
@@ -254,6 +255,51 @@ function registerAdmin(app, ctx) {
     }
     await store.setBookGoal(goal);
     res.json({ ok: true, goal });
+  }));
+
+  app.get('/api/admin/trek-definitions', requireAdmin, (req, res) => {
+    res.json({ ok: true, treks: getTreks(true) });
+  });
+
+  function trekPayload(body, previous = null) {
+    const name = clean(body.name ?? previous?.name, 100);
+    const rawId = clean(body.id ?? previous?.id, 30).toLowerCase();
+    const id = rawId.replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '');
+    const seats = Number(body.seats ?? previous?.seats);
+    const image = String(body.image ?? previous?.image ?? '').trim();
+    if (!name) return { error: 'Trek name is required.', field: 'name' };
+    if (!/^[a-z0-9-]{2,30}$/.test(id)) return { error: 'Use a short trek ID with letters, numbers, or hyphens.', field: 'id' };
+    if (!Number.isInteger(seats) || seats < 1 || seats > 10000) return { error: 'Seats must be between 1 and 10,000.', field: 'seats' };
+    if (image && !image.startsWith('/images/') && !image.startsWith('data:image/')) return { error: 'Upload an image or use an existing /images path.', field: 'image' };
+    if (image.length > 2_100_000) return { error: 'The compressed image must be smaller than 1.5 MB.', field: 'image' };
+    const lines = (value, max) => (Array.isArray(value) ? value : String(value ?? '').split('\n')).map((line) => clean(line, 240)).filter(Boolean).slice(0, max);
+    return { id, name, seats, image, days: clean(body.days ?? previous?.days, 40), location: clean(body.location ?? previous?.location, 120), themes: clean(body.themes ?? previous?.themes, 160), alt: clean(body.alt ?? previous?.alt, 200), caption: clean(body.caption ?? previous?.caption, 240), description: clean(body.description ?? previous?.description, 1000), itinerary: lines(body.itinerary ?? previous?.itinerary, 30), takeaways: lines(body.takeaways ?? previous?.takeaways, 20), note: clean(body.note ?? previous?.note, 600), archived: Boolean(previous?.archived) };
+  }
+
+  app.post('/api/admin/trek-definitions', requireAdmin, asyncRoute(async (req, res) => {
+    const payload = trekPayload(req.body);
+    if (payload.error) return res.status(400).json({ ok: false, error: payload.error, field: payload.field });
+    if (getTreks(true).some((trek) => trek.id === payload.id)) return res.status(409).json({ ok: false, error: 'That trek ID already exists.' });
+    res.status(201).json({ ok: true, trek: await store.saveTrek(payload) });
+  }));
+
+  app.patch('/api/admin/trek-definitions/:id', requireAdmin, asyncRoute(async (req, res) => {
+    const previous = getTreks(true).find((trek) => trek.id === req.params.id);
+    if (!previous) return notFound(res);
+    const payload = trekPayload({ ...req.body, id: previous.id }, previous);
+    if (payload.error) return res.status(400).json({ ok: false, error: payload.error, field: payload.field });
+    res.json({ ok: true, trek: await store.saveTrek(payload) });
+  }));
+
+  app.delete('/api/admin/trek-definitions/:id', requireAdmin, asyncRoute(async (req, res) => {
+    const trek = await store.archiveTrek(req.params.id, true);
+    if (!trek) return notFound(res);
+    res.json({ ok: true, trek });
+  }));
+  app.post('/api/admin/trek-definitions/:id/restore', requireAdmin, asyncRoute(async (req, res) => {
+    const trek = await store.archiveTrek(req.params.id, false);
+    if (!trek) return notFound(res);
+    res.json({ ok: true, trek });
   }));
 
   app.get('/api/admin/events', requireAdmin, (req, res) => {
@@ -277,7 +323,7 @@ function registerAdmin(app, ctx) {
       return { error: 'Choose a valid event date.', field: 'date' };
     }
     if (time && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) return { error: 'Choose a valid event time.', field: 'time' };
-    if (trek && !TREKS.some((item) => item.id === trek)) return { error: 'Choose a valid trek destination.', field: 'trek' };
+    if (trek && !getTreks().some((item) => item.id === trek)) return { error: 'Choose a valid trek destination.', field: 'trek' };
     if (url) {
       try {
         if (new URL(url).protocol !== 'https:') throw new Error('protocol');
@@ -324,7 +370,7 @@ function registerAdmin(app, ctx) {
     for (const row of snap.passes) add('pass', 'passes', row, row.track);
     for (const row of snap.reservations) add('reservation', 'reservations', row, `${store.trekLabel(row.trek)} · ${row.wc}`);
     for (const row of snap.events) {
-      const trekName = row.trek ? TREKS.find((item) => item.id === row.trek)?.name || row.trek : '';
+      const trekName = row.trek ? getTreks().find((item) => item.id === row.trek)?.name || row.trek : '';
       if (`${row.title} ${row.location} ${row.description} ${trekName}`.toLowerCase().includes(q)) {
         results.push({ type: 'event', collection: 'events', id: row.id, title: row.title, subtitle: `${row.date}${trekName ? ` · ${trekName}` : ''}${row.location ? ` · ${row.location}` : ''}`, href: '#/events' });
       }
@@ -394,14 +440,14 @@ function registerAdmin(app, ctx) {
       const next = { ...previous, status };
       if (collection === 'reservations' && status !== 'cancelled' && store.hasOpenReservation(next.wc, next.trek, id)) { skipped.push(id); continue; }
       if (collection === 'reservations' && TAKES_SEAT.has(status) && !TAKES_SEAT.has(previous.status)) {
-        const trek = TREKS.find((item) => item.id === previous.trek);
+        const trek = getTreks().find((item) => item.id === previous.trek);
         if (trek && store.seatsTaken(previous.trek, id) >= trek.seats) { skipped.push(id); continue; }
       }
       const log = activityFor(collection, next, previous, { status });
       try {
         const activity = { type: TYPE_OF[collection], ...log };
         const result = collection === 'reservations'
-          ? await store.updateReservation(id, { status }, activity, TREKS.find((item) => item.id === next.trek)?.seats)
+          ? await store.updateReservation(id, { status }, activity, getTreks().find((item) => item.id === next.trek)?.seats)
           : await store.updateRow(collection, id, { status }, activity);
         if (result) updated.push(result.id);
       } catch (error) {
@@ -437,10 +483,16 @@ function registerAdmin(app, ctx) {
       const body = listCollection(collection, req);
       const snap = store.snapshot();
       if (collection === 'reservations') {
-        body.capacity = TREKS.map((trek) => {
+        body.capacity = getTreks().map((trek) => {
           const rows = snap.reservations.filter((r) => r.trek === trek.id);
           const taken = rows.filter((r) => TAKES_SEAT.has(r.status)).length;
-          return { id: trek.id, name: trek.name, days: trek.days, location: trek.location, image: trek.image, seats: trek.seats, taken, left: Math.max(0, trek.seats - taken), waitlisted: rows.filter((r) => r.status === 'waitlisted').length, checkedIn: rows.filter((r) => r.status === 'checked-in').length };
+          const events = snap.events
+            .filter((event) => event.trek === trek.id)
+            .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.time || '').localeCompare(String(b.time || '')))
+            .map(({ id, title, date, time, location, description, url, trek: linkedTrek }) => ({
+              id, title, date, time, location, description, url, trek: linkedTrek,
+            }));
+          return { ...trek, taken, left: Math.max(0, trek.seats - taken), waitlisted: rows.filter((r) => r.status === 'waitlisted').length, checkedIn: rows.filter((r) => r.status === 'checked-in').length, events };
         });
       }
       if (collection === 'pledges') {
@@ -565,7 +617,7 @@ function registerAdmin(app, ctx) {
     const notes = clean(req.body.notes, 2000);
     if (!isNonEmpty(name)) return res.status(400).json({ ok: false, error: 'Name is required.', field: 'name' });
     if (!isNonEmpty(wc)) return res.status(400).json({ ok: false, error: 'WeChat ID is required.', field: 'wc' });
-    const definition = TREKS.find((item) => item.id === trek);
+    const definition = getTreks().find((item) => item.id === trek);
     if (!definition) return res.status(400).json({ ok: false, error: 'Unknown trek.', field: 'trek' });
     if (!STATUSES.reservations.includes(status)) return res.status(400).json({ ok: false, error: 'Unknown status.' });
     if (TAKES_SEAT.has(status) && store.seatsTaken(trek) >= definition.seats) return res.status(409).json({ ok: false, error: `${definition.name} is full. Add them to the waitlist instead.` });
@@ -585,7 +637,7 @@ function registerAdmin(app, ctx) {
     const patch = {};
     if (req.body.name != null) { patch.name = clean(req.body.name, 80); if (!patch.name) return res.status(400).json({ ok: false, error: 'Name is required.', field: 'name' }); }
     if (req.body.wc != null) { patch.wc = clean(req.body.wc, 60); if (!patch.wc) return res.status(400).json({ ok: false, error: 'WeChat ID is required.', field: 'wc' }); }
-    if (req.body.trek != null) { patch.trek = clean(req.body.trek, 20); if (!TREKS.some((item) => item.id === patch.trek)) return res.status(400).json({ ok: false, error: 'Unknown trek.', field: 'trek' }); }
+    if (req.body.trek != null) { patch.trek = clean(req.body.trek, 20); if (!getTreks().some((item) => item.id === patch.trek)) return res.status(400).json({ ok: false, error: 'Unknown trek.', field: 'trek' }); }
     if (req.body.notes != null) patch.notes = clean(req.body.notes, 2000);
     if (req.body.status != null) { patch.status = clean(req.body.status, 20); if (!STATUSES.reservations.includes(patch.status)) return res.status(400).json({ ok: false, error: 'Unknown status.' }); }
     if (!Object.keys(patch).length) return res.status(400).json({ ok: false, error: 'Nothing to update.' });
@@ -593,10 +645,10 @@ function registerAdmin(app, ctx) {
     if (next.status !== 'cancelled' && store.hasOpenReservation(next.wc, next.trek, previous.id)) return res.status(409).json({ ok: false, error: 'This WeChat ID already has a seat or waitlist spot on this trek.' });
     const wasTakingSeat = TAKES_SEAT.has(previous.status) && previous.trek === next.trek;
     if (TAKES_SEAT.has(next.status) && !wasTakingSeat) {
-      const definition = TREKS.find((item) => item.id === next.trek);
+      const definition = getTreks().find((item) => item.id === next.trek);
       if (definition && store.seatsTaken(next.trek, previous.id) >= definition.seats) return res.status(409).json({ ok: false, error: `${definition.name} is full. Keep them on the waitlist.` });
     }
-    const definition = TREKS.find((item) => item.id === next.trek);
+    const definition = getTreks().find((item) => item.id === next.trek);
     try {
       const result = await store.updateReservation(previous.id, patch, { type: 'reservation', ...activityFor('reservations', next, previous, patch) }, definition?.seats);
       res.json({ ok: true, item: result });

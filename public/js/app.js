@@ -155,8 +155,11 @@
     treks(o) {
       if (o.tab) setTab($('#m-treks [data-tabs]'), o.tab);
       syncReserveTrek();
-      loadTrekSeats();
-      loadPublicEvents();
+      loadTrekSeats().then(() => {
+        if (o.tab && trekData.some((trek) => trek.id === o.tab)) setTab($('#m-treks [data-tabs]'), o.tab);
+        syncReserveTrek();
+        return loadPublicEvents();
+      });
     },
     craft() { go(0); },
     impact(o) {
@@ -368,7 +371,7 @@
       store.set('hw_book_baseline', bookBaseline);
       $('#statMembers').textContent = s.passes + s.applications;
       $('#statSeats').textContent =
-        (s.reservations.alibaba + s.reservations.refinery) + ' reserved';
+        Object.values(s.reservations || {}).reduce((sum, count) => sum + (Number(count) || 0), 0) + ' reserved';
     } catch {
       markOffline();
       const saved = store.get('hw_pledges', []);
@@ -381,10 +384,32 @@
 
   /* ---------------- trek seats + reservations ---------------- */
   let trekData = [];
+  let trekMarkupSignature = '';
+  const trekEsc = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  function renderTrekDefinitions(treks) {
+    const root = $('#m-treks [data-tabs]');
+    const select = $('#resTrek');
+    if (!root || !select || !treks.length) return;
+    const signature = JSON.stringify(treks.map(({ reserved, left, ...definition }) => definition));
+    if (signature === trekMarkupSignature) return;
+    trekMarkupSignature = signature;
+    root.innerHTML = `<div class="tabs" role="tablist" aria-label="Trek destinations">${treks.map((trek, i) => `<button class="tab ${i ? '' : 'active'}" role="tab" data-tab-btn="${trekEsc(trek.id)}" aria-selected="${i ? 'false' : 'true'}">${trekEsc(trek.name)}</button>`).join('')}</div>${treks.map((trek, i) => `<div class="panel" data-panel="${trekEsc(trek.id)}" role="tabpanel" ${i ? 'hidden' : ''}>
+      ${trek.image ? `<figure class="m-photo"><img src="${trekEsc(trek.image)}" alt="${trekEsc(trek.alt || trek.name)}" loading="lazy" /><figcaption>${trekEsc(trek.caption || trek.name)}</figcaption></figure>` : ''}
+      ${trek.description ? `<p class="m-lead">${trekEsc(trek.description)}</p>` : ''}
+      <div class="chips"><span class="chip">${trekEsc(trek.days)}</span><span class="chip">${trekEsc(trek.location)}</span><span class="chip">${trekEsc(trek.themes)}</span><span class="chip hot" data-seats-chip="${trekEsc(trek.id)}">~${trek.seats} seats</span></div>
+      <div class="seat-meter" aria-live="polite"><div class="track" style="flex:1"><i data-seats-bar="${trekEsc(trek.id)}"></i></div><b data-seats-left="${trekEsc(trek.id)}">Loading seats…</b></div>
+      <section class="trek-events" data-trek-events="${trekEsc(trek.id)}" aria-live="polite"><h4 class="m-h">Upcoming dates</h4><div class="trek-event-list"><p class="trek-events-empty">Loading dates from the club calendar…</p></div></section>
+      <div class="two-col m-sec"><div><p class="m-h">Itinerary</p><ul class="timeline">${(trek.itinerary || []).map((line) => { const [lead, ...rest] = String(line).split('|'); return `<li><b>${trekEsc(rest.length ? lead : '')}</b> ${trekEsc(rest.length ? rest.join('|') : lead)}</li>`; }).join('')}</ul></div><div><p class="m-h">You'll bring home</p><ul class="ticks">${(trek.takeaways || []).map((item) => `<li>${trekEsc(item)}</li>`).join('')}</ul>${trek.note ? `<p class="note">${trekEsc(trek.note)}</p>` : ''}</div></div>
+      </div>`).join('')}`;
+    select.innerHTML = treks.map((trek) => `<option value="${trekEsc(trek.id)}">${trekEsc(trek.name)}</option>`).join('');
+    $$('[data-tab-btn]', root).forEach((button) => button.addEventListener('click', () => { setTab(root, button.dataset.tabBtn); syncReserveTrek(); }));
+  }
+
   async function loadTrekSeats() {
     try {
       const d = await api.get('/api/treks');
       trekData = d.treks;
+      renderTrekDefinitions(trekData);
       for (const t of trekData) {
         const leftEl = $(`[data-seats-left="${t.id}"]`);
         const barEl = $(`[data-seats-bar="${t.id}"]`);
@@ -401,7 +426,7 @@
   function syncReserveTrek() {
     const active = $('#m-treks .tab.active');
     const sel = $('#resTrek');
-    if (active && sel) sel.value = active.dataset.tabBtn === 'refinery' ? 'refinery' : 'alibaba';
+    if (active && sel) sel.value = active.dataset.tabBtn;
   }
 
   const resForm = $('#reserveForm');
@@ -1148,7 +1173,7 @@
     if (publicRefreshPromise) return publicRefreshPromise;
     publicRefreshPromise = (async () => {
       await Promise.all([
-        loadStats(), loadPledges(), loadTrekSeats(), loadRecentPasses(), loadPublicActivity(), loadPublicEvents(),
+        loadStats(), loadPledges(), loadTrekSeats().then(loadPublicEvents), loadRecentPasses(), loadPublicActivity(),
       ]);
       await syncOfflinePledges();
       await syncOfflineApplications();

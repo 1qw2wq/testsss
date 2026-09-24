@@ -31,6 +31,8 @@ const TREK_LABELS = { alibaba: 'Alibaba HQ', refinery: 'Refinery Island' };
 const ACTIVE_SEAT_STATUSES = new Set(['confirmed', 'checked-in']);
 const DATABASE_URL = String(process.env.DATABASE_URL || '').trim();
 const TABLE_NAME = 'hiworld_club_state';
+let storageInitializationState = DATABASE_URL ? 'initializing' : 'ready';
+let storageInitializationErrorCode = '';
 
 function blank() {
   return {
@@ -395,7 +397,12 @@ async function initializePostgresStore() {
       await client.query(`UPDATE ${TABLE_NAME} SET state = $1::jsonb, revision = revision + 1, updated_at = NOW() WHERE id = 1`, [JSON.stringify(data)]);
     }
     await client.query('COMMIT');
+    storageInitializationState = 'ready';
+    storageInitializationErrorCode = '';
   } catch (error) {
+    storageInitializationState = 'error';
+    storageInitializationErrorCode = typeof error.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(error.code)
+      ? error.code : 'DATABASE_CONNECT_FAILED';
     if (client) {
       try { await client.query('ROLLBACK'); } catch {}
     }
@@ -409,19 +416,38 @@ async function initializePostgresStore() {
 
 if (DATABASE_URL) {
   ready = initializePostgresStore().catch((error) => {
+    storageInitializationState = 'error';
+    storageInitializationErrorCode = typeof error.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(error.code)
+      ? error.code : 'DATABASE_CONNECT_FAILED';
     console.error('PostgreSQL initialization failed:', error.message);
     throw error;
   });
 } else {
+  storageInitializationState = 'ready';
   initializeFileStore();
   ready = Promise.resolve();
+}
+
+function storageStatus() {
+  if (!DATABASE_URL) return { storage: 'json', databaseConfigured: false, ready: true };
+  if (storageInitializationState === 'ready' && pool) {
+    return { storage: 'postgres', databaseConfigured: true, ready: true };
+  }
+  if (storageInitializationState === 'error') {
+    return {
+      storage: 'unavailable', databaseConfigured: true, ready: false,
+      databaseErrorCode: storageInitializationErrorCode || 'DATABASE_CONNECT_FAILED',
+    };
+  }
+  return { storage: 'initializing', databaseConfigured: true, ready: false };
 }
 
 const store = {
   ready,
   refresh,
   snapshot,
-  storageMode: () => (pool ? 'postgres' : 'json'),
+  storageMode: () => storageStatus().storage,
+  storageStatus,
   storagePath: () => DB_PATH,
   isEmpty,
   isDemo: () => !!data.meta.demo,

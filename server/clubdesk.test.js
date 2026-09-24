@@ -11,6 +11,8 @@ const dbPath = path.join(os.tmpdir(), `hiworld-club-test-${process.pid}-${Date.n
 const token = 'test-clubdesk-secret';
 process.env.DB_PATH = dbPath;
 process.env.SEED_DEMO = '0';
+delete process.env.DATABASE_URL;
+delete process.env.VERCEL;
 process.env.ADMIN_TOKEN = token;
 process.env.NODE_ENV = 'test';
 
@@ -43,6 +45,17 @@ test('club desk auth, live totals, status actions, and trek capacity', async (t)
   const base = `http://127.0.0.1:${address.port}`;
 
   try {
+    await t.test('health reports the active file adapter without leaking configuration', async () => {
+      const health = await request(base, '/api/health');
+      assert.equal(health.response.status, 200);
+      assert.equal(health.data.ok, true);
+      assert.equal(health.data.storage, 'json');
+      assert.equal(health.data.databaseConfigured, false);
+      assert.equal(health.data.ready, true);
+      assert.equal(health.data.serverless, false);
+      assert.equal('DATABASE_URL' in health.data, false);
+    });
+
     await t.test('protects admin endpoints and records public applications', async () => {
       const denied = await request(base, '/api/admin/overview');
       assert.equal(denied.response.status, 401);

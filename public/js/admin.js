@@ -249,6 +249,15 @@
     try {
       const health = await fetch('/api/health', { cache: 'no-store' }).then((r) => r.json());
       els.gateHint.hidden = !health.adminDefault;
+      const storageNeedsAttention = health.serverless && health.storage !== 'postgres';
+      if (storageNeedsAttention) {
+        els.storageWarning.textContent = health.storage === 'json'
+          ? 'Vercel is using temporary JSON storage. Set DATABASE_URL to your Supabase transaction-pooler URI and redeploy before changing or clearing live data.'
+          : health.storage === 'initializing'
+            ? 'PostgreSQL is still initializing. Refresh this page shortly; check the deployment logs if this continues.'
+            : `PostgreSQL is unavailable${health.databaseErrorCode ? ` (error ${health.databaseErrorCode})` : ''}. Check DATABASE_URL in Vercel and the function logs.`;
+      }
+      els.storageWarning.hidden = !storageNeedsAttention;
     } catch {
       els.gateHint.hidden = true;
     }

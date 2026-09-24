@@ -76,6 +76,17 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 const apiLimiter = rateLimit({ windowMs: 60_000, max: 180, standardHeaders: 'draft-8', legacyHeaders: false });
 const writeLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: 'draft-8', legacyHeaders: false });
 app.use('/api/', apiLimiter);
+// Keep health reachable even when DATABASE_URL is misconfigured and store.ready rejects.
+app.get('/api/health', (req, res) => {
+  const storage = store.storageStatus();
+  res.status(storage.ready ? 200 : 503).json({
+    ok: storage.ready,
+    time: new Date().toISOString(),
+    ...storage,
+    serverless: Boolean(process.env.VERCEL),
+    adminDefault: ADMIN_TOKEN === 'hiworld-admin',
+  });
+});
 app.use('/api/', asyncRoute(async (req, res, next) => {
   await store.ready;
   await store.refresh();
@@ -118,14 +129,6 @@ function requireAdmin(req, res, next) {
 }
 
 /* ---------------- routes ---------------- */
-app.get('/api/health', (req, res) => res.json({
-  ok: true,
-  time: new Date().toISOString(),
-  storage: store.storageMode(),
-  serverless: Boolean(process.env.VERCEL),
-  adminDefault: ADMIN_TOKEN === 'hiworld-admin',
-}));
-
 app.get('/api/treks', (req, res) => {
   const counts = reservationCounts();
   res.json({
@@ -351,6 +354,16 @@ app.use('/api', (req, res) => res.status(404).json({ ok: false, error: 'Not foun
 app.use((err, req, res, next) => {
   console.error(err);
   if (res.headersSent) return;
+  const storage = store.storageStatus();
+  if (req.path.startsWith('/api/') && storage.databaseConfigured && !storage.ready) {
+    return res.status(503).json({
+      ok: false,
+      error: storage.storage === 'initializing'
+        ? 'The database is still initializing. Please retry shortly.'
+        : 'The database connection is unavailable. Check DATABASE_URL in the deployment settings and the server logs.',
+      code: storage.databaseErrorCode || 'STORAGE_UNAVAILABLE',
+    });
+  }
   res.status(err.status || 500).json({ ok: false, error: 'Something went wrong. Please try again.' });
 });
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));

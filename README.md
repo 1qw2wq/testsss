@@ -40,7 +40,7 @@ With `DATABASE_URL` set, the app creates a PostgreSQL table named `hiworld_club_
 
 The JSONB approach keeps the existing data model intact while making PostgreSQL the durable backend. On the first connection, if the PostgreSQL table has no state row, the app bootstraps it from `DB_PATH` (or the normal empty/demo seed). After that, PostgreSQL is authoritative; updating or redeploying the static UI does not clear or replace the database row. If `DATABASE_URL` is not configured, the app uses the local JSON store instead.
 
-The health endpoint reports the active adapter as `storage: "postgres"` or `storage: "json"` at `GET /api/health`. On Vercel, confirm it reports `postgres` before clearing or editing live records; `json` means the app is using ephemeral `/tmp` storage and writes may not persist consistently between serverless instances. For Supabase, set `DATABASE_URL` to the project’s transaction-pooler PostgreSQL URI (not `SUPABASE_URL` or an API key), then redeploy.
+`GET /api/health` remains reachable during database startup and reports `storage: "postgres"`, `"json"`, `"initializing"`, or `"unavailable"`; a failed PostgreSQL connection includes a safe error code without exposing credentials. On Vercel, confirm it reports `postgres` before clearing or editing live records; `json` means the app is using ephemeral `/tmp` storage and writes may not persist consistently between serverless instances. For Supabase, set `DATABASE_URL` to the project’s transaction-pooler PostgreSQL URI (not `SUPABASE_URL` or an API key), then redeploy.
 
 ## Club desk and book totals
 

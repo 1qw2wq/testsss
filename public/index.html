@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="preload" as="image" href="/images/cohort.jpg" />
 <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="/css/styles.css" />
+<link rel="stylesheet" href="/css/styles.css?v=4" />
 </head>
 <body>
 
@@ -27,6 +27,7 @@
 <header class="nav" id="nav">
   <a href="#top" class="brand" aria-label="Hi World Club home"><span class="brand-mark" aria-hidden="true"></span>Hi World Club</a>
   <nav class="nav-links" id="navLinks" aria-label="Primary">
+    <a href="/events">Events</a>
     <a href="#moments">Moments</a>
     <a href="#pillars">Pillars</a>
     <a href="#" data-open="treks">Treks</a>
@@ -159,12 +160,33 @@
 
   <div class="stats-band reveal" aria-live="polite" aria-label="Live club stats">
     <span class="stat-chip status" id="netChip"><span class="dot" aria-hidden="true"></span><span>Live from the club server</span></span>
-    <span class="stat-chip card"><b id="statBooks" class="stat-hl">…</b><span>books pledged <em id="statBooksGoal">of 500 goal</em></span></span>
+    <span class="stat-chip card"><b id="statBooks" class="stat-hl">…</b><span>books toward goal <em id="statBooksGoal">of club goal · loading…</em></span></span>
     <span class="stat-chip card"><b id="statMembers">…</b><span>members &amp; applicants</span></span>
     <span class="stat-chip card"><b aria-hidden="true">🎟</b><span id="statSeats">trek seats</span></span>
   </div>
 
-  <a href="#moments" class="scroll-cue" aria-label="Scroll to moments"></a>
+  <section class="club-pulse reveal" aria-label="Recent public club updates">
+    <p class="club-pulse-heading"><span class="pulse" aria-hidden="true"></span> Recent club updates</p>
+    <ul id="clubPulseList" class="club-pulse-list" aria-live="polite" aria-relevant="additions text">
+      <li class="club-pulse-item empty">Checking for recent updates…</li>
+    </ul>
+  </section>
+
+  <a href="#events" class="scroll-cue" aria-label="Scroll to upcoming events"></a>
+</section>
+
+<!-- ============ UPCOMING EVENTS ============ -->
+<section class="events-section" id="events" aria-labelledby="eventsTitle">
+  <div class="events-inner">
+    <p class="events-eyebrow">Calendar · Get together</p>
+    <div class="events-heading">
+      <div><h2 id="eventsTitle">Upcoming events</h2><p>Meet, make, and explore with Hi World Club. New gatherings are posted here.</p></div>
+      <div class="events-heading-actions"><span class="events-live"><i aria-hidden="true"></i> Club calendar</span><a class="btn btn-sm" href="/events">View full calendar ↗</a></div>
+    </div>
+    <div class="public-event-grid" id="publicEvents" aria-live="polite" aria-relevant="additions text">
+      <p class="public-events-empty">Loading upcoming events…</p>
+    </div>
+  </div>
 </section>
 
 <!-- ============ MOMENTS / GALLERY ============ -->
@@ -282,7 +304,7 @@ Cohort</h2>
 
 <footer class="site-foot">
   <a href="#top" class="brand"><span class="brand-mark" aria-hidden="true"></span>Hi World Club</a>
-  <p class="foot-mid">Treks · Workshops · CSR — Explore well.</p>
+  <p class="foot-mid">Treks · Workshops · CSR — Explore well. <a class="foot-desk" href="/admin">Club desk</a></p>
   <div style="display:flex;gap:10px;flex-wrap:wrap">
     <button class="btn btn-sm" data-copy="broccoli18321">wc: broccoli18321</button>
     <button class="btn btn-ink btn-sm" data-open="join">Join the club</button>
@@ -308,6 +330,9 @@ Cohort</h2>
         </figure>
         <div class="chips"><span class="chip">1 day</span><span class="chip">Hangzhou</span><span class="chip">E-commerce · Cloud · Logistics</span><span class="chip hot" data-seats-chip="alibaba">~20 seats</span></div>
         <div class="seat-meter" aria-live="polite"><div class="track" style="flex:1"><i data-seats-bar="alibaba"></i></div><b data-seats-left="alibaba">Loading seats…</b></div>
+        <section class="trek-events" data-trek-events="alibaba" aria-live="polite" aria-label="Upcoming Alibaba HQ trek events">
+          <h4 class="m-h">Upcoming dates</h4><div class="trek-event-list"><p class="trek-events-empty">Loading dates from the club calendar…</p></div>
+        </section>
         <div class="two-col m-sec">
           <div><p class="m-h">Itinerary</p>
             <ul class="timeline">
@@ -329,6 +354,9 @@ Cohort</h2>
         </figure>
         <div class="chips"><span class="chip">2 days</span><span class="chip">Island site · ferry transfer</span><span class="chip">Energy · Operations · Safety</span><span class="chip hot" data-seats-chip="refinery">~16 seats</span></div>
         <div class="seat-meter" aria-live="polite"><div class="track" style="flex:1"><i data-seats-bar="refinery"></i></div><b data-seats-left="refinery">Loading seats…</b></div>
+        <section class="trek-events" data-trek-events="refinery" aria-live="polite" aria-label="Upcoming Refinery Island trek events">
+          <h4 class="m-h">Upcoming dates</h4><div class="trek-event-list"><p class="trek-events-empty">Loading dates from the club calendar…</p></div>
+        </section>
         <div class="two-col m-sec">
           <div><p class="m-h">Itinerary</p>
             <ul class="timeline">
@@ -430,10 +458,11 @@ Cohort</h2>
         </figure>
         <div class="meter m-sec">
           <div class="meter-top">
-            <div class="meter-num"><span id="bookCount">0</span><small>/ 500 books</small></div>
+            <div class="meter-num"><span id="bookCount">—</span><small id="bookGoalLabel">/ club goal</small></div>
             <span class="chip" id="bookLeft">—</span>
           </div>
           <div class="track"><i id="bookBar"></i></div>
+          <p class="book-breakdown-public" id="bookBreakdown">Loading book-drive totals…</p>
         </div>
         <form id="pledgeForm" class="m-sec" novalidate>
           <div class="form-grid">
@@ -531,7 +560,7 @@ Cohort</h2>
     <div id="joinDone" class="done" hidden>
       <div class="done-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="m5 12 5 5 9-10" /></svg></div>
       <h3 class="m-title" style="padding:0">Welcome, <span id="joinDoneName">explorer</span>.</h3>
-      <p class="m-lead" style="margin:0 auto">Your application is in. To speed things up, add us on WeChat and mention “Hi World Club”.</p>
+      <p class="m-lead" id="joinDoneLead" style="margin:0 auto">Your application is in. To speed things up, add us on WeChat and mention “Hi World Club”.</p>
       <div class="wc-box" style="max-width:420px;margin:20px auto 0"><code>broccoli18321</code><button class="btn btn-ink btn-sm" data-copy="broccoli18321">Copy ID</button></div>
       <div class="m-actions" style="justify-content:center"><button class="btn" id="joinAgain">Submit another</button><button class="btn" data-close>Done</button></div>
     </div>
@@ -547,6 +576,7 @@ Cohort</h2>
   </figure>
 </div>
 
-<script src="/js/app.js" defer></script>
+<script src="/js/app.js?v=4" defer></script>
 </body>
 </html>
+html>

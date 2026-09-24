@@ -25,15 +25,36 @@
         const res = await fetch(path, {
           headers: { 'Content-Type': 'application/json' },
           signal: ctrl.signal,
+          cache: 'no-store',
           ...opts,
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
         this.online = true;
         document.body.classList.remove('is-offline');
+        const chip = $('#netChip');
+        if (chip) {
+          chip.classList.remove('offline');
+          chip.querySelector('span:last-child').textContent = 'Live from the club server';
+        }
+        if (!res.ok) {
+          const error = new Error(data.error || `Request failed (${res.status})`);
+          error.status = res.status;
+          error.code = data.code;
+          error.data = data;
+          throw error;
+        }
         return data;
       } catch (err) {
-        if (err.name === 'AbortError') throw new Error('Request timed out. Please try again.');
+        if (err.name === 'AbortError') {
+          markOffline();
+          const timeoutError = new Error('Request timed out. Please try again.');
+          timeoutError.isNetwork = true;
+          throw timeoutError;
+        }
+        if (!err.status) {
+          markOffline();
+          err.isNetwork = true;
+        }
         throw err;
       } finally {
         clearTimeout(t);
@@ -45,6 +66,7 @@
 
   function markOffline() {
     api.online = false;
+    document.body.classList.add('is-offline');
     const chip = $('#netChip');
     if (chip) { chip.classList.add('offline'); chip.querySelector('span:last-child').textContent = 'Offline mode'; }
   }
@@ -134,6 +156,7 @@
       if (o.tab) setTab($('#m-treks [data-tabs]'), o.tab);
       syncReserveTrek();
       loadTrekSeats();
+      loadPublicEvents();
     },
     craft() { go(0); },
     impact(o) {
@@ -336,16 +359,23 @@
   async function loadStats() {
     try {
       const s = await api.get('/api/stats');
-      $('#statBooks').textContent = s.books.pledged;
-      $('#statBooksGoal').textContent = `of ${s.books.goal} goal`;
+      $('#statBooks').textContent = Number(s.books.pledged).toLocaleString('en-US');
+      const baseline = Number(s.books.base);
+      rememberDataEpoch(s.books.epoch);
+      $('#statBooksGoal').textContent = `of ${Number(s.books.goal).toLocaleString('en-US')} · ${baseline > 0 ? 'includes historical baseline' : 'desk pledges only'}`;
+      bookGoal = Number(s.books.goal) || bookGoal;
+      bookBaseline = Number.isFinite(baseline) && baseline >= 0 ? baseline : bookBaseline;
+      store.set('hw_book_baseline', bookBaseline);
       $('#statMembers').textContent = s.passes + s.applications;
       $('#statSeats').textContent =
         (s.reservations.alibaba + s.reservations.refinery) + ' reserved';
     } catch {
       markOffline();
-      const local = store.get('hw_pledges', []);
-      const total = 347 + local.reduce((a, p) => a + (p.qty || 0), 0);
-      $('#statBooks').textContent = total;
+      const saved = store.get('hw_pledges', []);
+      const local = Array.isArray(saved) ? saved : [];
+      const total = bookBaseline + local.reduce((sum, pledge) => sum + (Number(pledge.qty) || 0), 0);
+      $('#statBooks').textContent = total.toLocaleString('en-US');
+      $('#statBooksGoal').textContent = `of ${Number(bookGoal).toLocaleString('en-US')} · offline estimate`;
     }
   }
 
@@ -387,11 +417,14 @@
       btn.disabled = true;
       try {
         const d = await api.post('/api/reservations', { name, wc, trek });
-        toast(`Reserved! ${d.left} seat${d.left === 1 ? '' : 's'} left on this trek.`);
+        toast(d.waitlisted
+          ? 'This trek is full. You are on the waitlist — we will reach out.'
+          : `Reserved! ${d.left} seat${d.left === 1 ? '' : 's'} left on this trek.`);
         resForm.reset();
         syncReserveTrek();
         loadTrekSeats();
         loadStats();
+        loadPublicActivity();
       } catch (err) {
         toast(err.message);
       } finally {
@@ -402,38 +435,89 @@
   }
 
   /* ---------------- book drive (live API + offline fallback) ---------------- */
-  const BASE = 347, GOAL = 500;
-  const seed = [
-    { name: 'Mia', genre: "Children's picture books", qty: 6 },
-    { name: 'Anonymous', genre: 'STEM & science', qty: 3 },
-    { name: 'Jun', genre: 'English learning', qty: 4 },
-  ];
+  const DEFAULT_BASELINE = 347, DEFAULT_GOAL = 500;
+  const cachedBaseline = Number(store.get('hw_book_baseline', DEFAULT_BASELINE));
+  let bookBaseline = Number.isInteger(cachedBaseline) && cachedBaseline >= 0 && cachedBaseline <= 100000
+    ? cachedBaseline : DEFAULT_BASELINE;
+  let bookGoal = DEFAULT_GOAL;
+  let bookEpoch = store.get('hw_book_epoch', '__unknown__');
+  let syncingOfflinePledges = false;
+  let syncingOfflineApplications = false;
 
-  function paintMeter(total, animate) {
+  function rememberDataEpoch(value) {
+    const next = value == null ? '' : String(value);
+    const resetDetected = (bookEpoch !== '__unknown__' && bookEpoch !== next)
+      || (bookEpoch === '__unknown__' && next !== '');
+    let discarded = 0;
+    if (resetDetected) {
+      for (const key of ['hw_pledges', 'hw_apps']) {
+        const pending = store.get(key, []);
+        if (Array.isArray(pending) && pending.length) {
+          discarded += pending.length;
+          store.set(key, []);
+        }
+      }
+      if (store.get('hw_pass', null)) {
+        store.set('hw_pass', null);
+        applyPass(null);
+      }
+      if (discarded) {
+        toast('Pending offline submissions were cleared because the club data was reset.');
+        const lead = $('#joinDoneLead');
+        if (lead && !$('#joinDone').hidden) lead.textContent = 'The club data was reset before this application could be sent. Please submit it again when you are ready.';
+      }
+    }
+    bookEpoch = next;
+    store.set('hw_book_epoch', bookEpoch);
+  }
+
+  function newPledgeId() {
+    if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') return globalThis.crypto.randomUUID();
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 18)}`;
+  }
+
+  function paintMeter(total, goal = bookGoal, animate = false, base = bookBaseline) {
     const cnt = $('#bookCount');
+    const safeGoal = Number(goal) || DEFAULT_GOAL;
+    const suppliedBase = Number(base);
+    const safeBase = Number.isFinite(suppliedBase) && suppliedBase >= 0 ? suppliedBase : bookBaseline;
+    const numericTotal = Number(total) || 0;
+    bookGoal = safeGoal;
+    bookBaseline = safeBase;
+    store.set('hw_book_baseline', safeBase);
+    const pledges = Math.max(0, numericTotal - safeBase);
+    const display = (value) => Math.round(value).toLocaleString('en-US');
     if (animate) {
-      const from = +cnt.textContent || BASE;
+      const from = Number(String(cnt.textContent).replace(/,/g, '')) || safeBase;
       const start = performance.now();
       const step = (t) => {
         const k = Math.min(1, (t - start) / 700);
-        cnt.textContent = Math.round(from + (total - from) * k);
+        cnt.textContent = display(from + (numericTotal - from) * k);
         if (k < 1) requestAnimationFrame(step);
       };
       requestAnimationFrame(step);
     } else {
-      cnt.textContent = total;
+      cnt.textContent = display(numericTotal);
     }
+    $('#bookGoalLabel').textContent = `/ ${display(safeGoal)} books`;
+    $('#bookBreakdown').textContent = `${display(safeBase)} books in the historical baseline + ${display(pledges)} saved desk pledges. Only saved pledges are listed below.`;
     requestAnimationFrame(() => {
-      $('#bookBar').style.width = Math.min(100, (total / GOAL) * 100) + '%';
+      $('#bookBar').style.width = Math.min(100, (numericTotal / safeGoal) * 100) + '%';
     });
-    $('#bookLeft').textContent = total >= GOAL ? 'Goal reached — thank you!' : `${GOAL - total} to go`;
+    $('#bookLeft').textContent = numericTotal >= safeGoal ? 'Goal reached — thank you!' : `${display(Math.max(0, safeGoal - numericTotal))} to go`;
   }
 
   function paintPledges(rows) {
     const list = $('#pledgeList');
     list.innerHTML = '';
-    const items = rows.length ? rows : seed;
-    items.slice(0, 8).forEach((p) => {
+    if (!rows.length) {
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = 'No pledges yet. Be the first to add one.';
+      list.appendChild(li);
+      return;
+    }
+    rows.slice(0, 8).forEach((p) => {
       const li = document.createElement('li');
       const a = document.createElement('span');
       a.textContent = `${p.name} · ${p.genre}`;
@@ -447,15 +531,137 @@
   async function loadPledges(animate = false) {
     try {
       const d = await api.get('/api/pledges?limit=8');
-      paintMeter(d.total, animate);
-      paintPledges(d.pledges.length ? d.pledges : seed);
+      rememberDataEpoch(d.epoch);
+      paintMeter(d.total, d.goal, animate, d.base);
+      paintPledges(d.pledges);
     } catch {
       markOffline();
       const local = store.get('hw_pledges', []);
-      const total = BASE + local.reduce((a, p) => a + (p.qty || 0), 0);
-      paintMeter(total, animate);
-      paintPledges([...local].reverse().concat(seed));
+      const rows = Array.isArray(local) ? local : [];
+      const total = bookBaseline + rows.reduce((sum, pledge) => sum + (Number(pledge.qty) || 0), 0);
+      paintMeter(total, bookGoal, animate, bookBaseline);
+      paintPledges([...rows].reverse());
     }
+  }
+
+  async function syncOfflinePledges() {
+    if (syncingOfflinePledges || !navigator.onLine || !api.online) return 0;
+    const pending = store.get('hw_pledges', []);
+    if (!Array.isArray(pending) || !pending.length) return 0;
+    syncingOfflinePledges = true;
+    let synced = 0, discarded = 0;
+    try {
+      let index = 0;
+      while (index < pending.length) {
+        const pledge = pending[index];
+        if (!pledge || !Number.isInteger(Number(pledge.qty)) || Number(pledge.qty) < 1 || Number(pledge.qty) > 20) {
+          pending.splice(index, 1);
+          store.set('hw_pledges', pending);
+          discarded++;
+          continue;
+        }
+        const clientId = pledge.client_id || newPledgeId();
+        const clientEpoch = pledge.client_epoch == null
+          ? (bookEpoch === '__unknown__' ? '' : bookEpoch)
+          : String(pledge.client_epoch);
+        pending[index] = { ...pledge, client_id: clientId, client_epoch: clientEpoch };
+        store.set('hw_pledges', pending);
+        try {
+          const result = await api.post('/api/pledges', {
+            name: pledge.name, genre: pledge.genre, qty: Number(pledge.qty),
+            client_id: clientId, client_epoch: clientEpoch,
+          });
+          rememberDataEpoch(result.epoch);
+          pending.splice(index, 1);
+          store.set('hw_pledges', pending);
+          synced++;
+        } catch (error) {
+          if (error.code === 'STALE_CLIENT_EPOCH') {
+            pending.splice(index, 1);
+            store.set('hw_pledges', pending);
+            discarded++;
+            continue;
+          }
+          if (error.status >= 400 && error.status < 500 && error.status !== 429) {
+            pending.splice(index, 1);
+            store.set('hw_pledges', pending);
+            discarded++;
+            continue;
+          }
+          break;
+        }
+      }
+    } finally {
+      syncingOfflinePledges = false;
+    }
+    if (synced || discarded) {
+      const notice = [synced ? `${synced} offline pledge${synced === 1 ? '' : 's'} synced` : '', discarded ? `${discarded} outdated pledge${discarded === 1 ? '' : 's'} removed` : '']
+        .filter(Boolean).join('; ');
+      toast(`${notice}.`);
+    }
+    if (synced) {
+      await Promise.all([loadPledges(), loadStats()]);
+      loadPublicActivity();
+    }
+    return synced;
+  }
+
+  async function syncOfflineApplications() {
+    if (syncingOfflineApplications || !navigator.onLine || !api.online) return 0;
+    const pending = store.get('hw_apps', []);
+    if (!Array.isArray(pending) || !pending.length) return 0;
+    syncingOfflineApplications = true;
+    let synced = 0, discarded = 0;
+    try {
+      let index = 0;
+      while (index < pending.length) {
+        const application = pending[index];
+        if (!application || !String(application.name || '').trim() || !String(application.wc || '').trim()) {
+          pending.splice(index, 1);
+          store.set('hw_apps', pending);
+          discarded++;
+          continue;
+        }
+        const clientId = application.client_id || newPledgeId();
+        const clientEpoch = application?.client_epoch == null
+          ? (bookEpoch === '__unknown__' ? '' : bookEpoch)
+          : String(application.client_epoch);
+        pending[index] = { ...application, client_id: clientId, client_epoch: clientEpoch };
+        store.set('hw_apps', pending);
+        try {
+          const result = await api.post('/api/applications', {
+            name: application.name, wc: application.wc, org: application.org || '',
+            interests: Array.isArray(application.interests) ? application.interests : [],
+            msg: application.msg || '', client_id: clientId, client_epoch: clientEpoch,
+          });
+          rememberDataEpoch(result.epoch);
+          pending.splice(index, 1);
+          store.set('hw_apps', pending);
+          synced++;
+        } catch (error) {
+          if (error.code === 'STALE_CLIENT_EPOCH' || (error.status >= 400 && error.status < 500 && error.status !== 429)) {
+            pending.splice(index, 1);
+            store.set('hw_apps', pending);
+            discarded++;
+            continue;
+          }
+          break;
+        }
+      }
+    } finally {
+      syncingOfflineApplications = false;
+    }
+    if (synced) {
+      toast(`${synced === 1 ? 'Your offline application was' : `${synced} offline applications were`} sent to the club.`);
+      const lead = $('#joinDoneLead');
+      if (lead && !$('#joinDone').hidden) lead.textContent = 'Your application is in. To speed things up, add us on WeChat and mention “Hi World Club”.';
+    }
+    if (discarded) {
+      toast(`${discarded} outdated offline application${discarded === 1 ? '' : 's'} removed.`);
+      const lead = $('#joinDoneLead');
+      if (lead && !$('#joinDone').hidden) lead.textContent = 'An outdated offline application was not sent. Please submit it again when you are ready.';
+    }
+    return synced;
   }
 
   let qty = 1;
@@ -468,23 +674,31 @@
     const btn = e.target.querySelector('[type="submit"]');
     const name = $('#plName').value.trim() || 'Anonymous';
     const genre = $('#plGenre').value;
+    const clientId = newPledgeId();
+    const clientEpoch = bookEpoch === '__unknown__' ? '' : bookEpoch;
     btn.classList.add('btn-busy');
     btn.disabled = true;
     try {
-      const d = await api.post('/api/pledges', { name, genre, qty });
-      paintMeter(d.total, true);
+      const d = await api.post('/api/pledges', { name, genre, qty, client_id: clientId, client_epoch: clientEpoch });
+      rememberDataEpoch(d.epoch);
+      paintMeter(d.total, d.goal, true, d.base);
       loadPledges();
+      loadPublicActivity();
       toast(`Thank you, ${name}! ${qty} book${qty > 1 ? 's' : ''} pledged.`);
     } catch (err) {
-      // Offline fallback: keep it locally so nothing is lost.
-      const local = store.get('hw_pledges', []);
-      local.push({ name, genre, qty, t: Date.now() });
-      store.set('hw_pledges', local);
-      const total = BASE + local.reduce((a, p) => a + (p.qty || 0), 0);
-      paintMeter(total, true);
-      paintPledges([...local].reverse().concat(seed));
-      toast(api.online ? err.message : `Saved offline. Thank you, ${name}!`);
-      if (!api.online) markOffline();
+      if (err.isNetwork) {
+        const saved = store.get('hw_pledges', []);
+        const local = Array.isArray(saved) ? saved : [];
+        local.push({ name, genre, qty, client_id: clientId, client_epoch: clientEpoch, t: Date.now() });
+        store.set('hw_pledges', local);
+        const total = bookBaseline + local.reduce((sum, pledge) => sum + (Number(pledge.qty) || 0), 0);
+        paintMeter(total, bookGoal, true, bookBaseline);
+        paintPledges([...local].reverse());
+        toast(`Saved offline. It will sync when you reconnect, ${name}.`);
+        markOffline();
+      } else {
+        toast(err.message);
+      }
     } finally {
       qty = 1; qOut.textContent = 1;
       $('#plName').value = '';
@@ -551,9 +765,10 @@
         applyPass(d.pass);
         loadRecentPasses();
         loadStats();
+        loadPublicActivity();
         toast(`Pass issued to ${name}. It's on your lanyard now.`);
       } catch (err) {
-        if (!api.online || /fetch|network|timeout/i.test(err.message)) {
+        if (err.isNetwork) {
           const p = { name, track: pTrack.value };
           store.set('hw_pass', p);
           applyPass(p);
@@ -607,22 +822,29 @@
         interests: $$('#joinForm input[name=interest]:checked').map((i) => i.value),
         msg: $('#jMsg').value.trim(),
       };
+      const clientId = newPledgeId();
+      const clientEpoch = bookEpoch === '__unknown__' ? '' : bookEpoch;
       try {
-        const d = await api.post('/api/applications', data);
+        const d = await api.post('/api/applications', { ...data, client_id: clientId, client_epoch: clientEpoch });
+        rememberDataEpoch(d.epoch);
         $('#joinDoneName').textContent = d.name || data.name.split(' ')[0];
+        $('#joinDoneLead').textContent = 'Your application is in. To speed things up, add us on WeChat and mention “Hi World Club”.';
         $('#joinFormWrap').hidden = true;
         $('#joinDone').hidden = false;
         loadStats();
+        loadPublicActivity();
       } catch (err) {
-        if (!api.online || /fetch|network|timeout/i.test(err.message)) {
-          const apps = store.get('hw_apps', []);
-          apps.push({ ...data, t: Date.now() });
+        if (err.isNetwork) {
+          const saved = store.get('hw_apps', []);
+          const apps = Array.isArray(saved) ? saved : [];
+          apps.push({ ...data, client_id: clientId, client_epoch: clientEpoch, t: Date.now() });
           store.set('hw_apps', apps);
           markOffline();
           $('#joinDoneName').textContent = data.name.split(' ')[0];
+          $('#joinDoneLead').textContent = 'Saved on this device while you are offline. It will be sent to the club automatically once you reconnect.';
           $('#joinFormWrap').hidden = true;
           $('#joinDone').hidden = false;
-          toast('Saved offline — we will sync it when you are back online.');
+          toast('Saved offline — it will sync when you reconnect.');
         } else {
           toast(err.message);
           if (err.message.includes('WeChat')) $('#jWc').closest('.field').classList.add('err');
@@ -638,6 +860,7 @@
     );
     $('#joinAgain').addEventListener('click', () => {
       joinForm.reset();
+      $('#joinDoneLead').textContent = 'Your application is in. To speed things up, add us on WeChat and mention “Hi World Club”.';
       $('#joinDone').hidden = true;
       $('#joinFormWrap').hidden = false;
       $('#jName').focus();
@@ -730,11 +953,214 @@
     poster.addEventListener('pointerleave', () => poster.classList.remove('parallax'));
   }
 
+  /* ---------------- privacy-safe live club activity ---------------- */
+  let publicActivitySignature = null;
+  function formatPublicTime(value) {
+    const raw = String(value || '');
+    const date = new Date(raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`);
+    if (Number.isNaN(date.getTime())) return '';
+    return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
+  }
+
+  async function loadPublicActivity() {
+    const list = $('#clubPulseList');
+    if (!list) return;
+    try {
+      const result = await api.get('/api/public/activity?limit=5');
+      const items = Array.isArray(result.activity) ? result.activity : [];
+      const signature = JSON.stringify(items.map((item) => [item.message, item.created_at, item.type]));
+      if (signature === publicActivitySignature) return;
+      publicActivitySignature = signature;
+      list.replaceChildren();
+      if (!items.length) {
+        const empty = document.createElement('li');
+        empty.className = 'club-pulse-item empty';
+        empty.textContent = 'No recent updates yet — check back soon.';
+        list.appendChild(empty);
+        return;
+      }
+      items.forEach((item) => {
+        const li = document.createElement('li');
+        li.className = 'club-pulse-item';
+        const dot = document.createElement('i');
+        dot.className = `club-pulse-dot type-${['application', 'pledge', 'pass', 'reservation', 'event'].includes(item.type) ? item.type : 'reservation'}`;
+        dot.setAttribute('aria-hidden', 'true');
+        const message = document.createElement('span');
+        message.textContent = item.message;
+        li.append(dot, message);
+        const timestamp = formatPublicTime(item.created_at);
+        if (timestamp) {
+          const time = document.createElement('time');
+          time.dateTime = item.created_at.includes('T') ? item.created_at : `${item.created_at.replace(' ', 'T')}Z`;
+          time.textContent = timestamp;
+          li.appendChild(time);
+        }
+        list.appendChild(li);
+      });
+    } catch {
+      markOffline();
+    }
+  }
+
+  /* ---------------- public event calendar ---------------- */
+  let publicEventsSignature = null;
+  function eventDateParts(value) {
+    const date = new Date(`${String(value || '')}T12:00:00Z`);
+    if (Number.isNaN(date.getTime())) return { month: 'Date', day: 'TBA', full: value || 'Date to be announced' };
+    return {
+      month: new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' }).format(date).toUpperCase(),
+      day: new Intl.DateTimeFormat('en-US', { day: '2-digit', timeZone: 'UTC' }).format(date),
+      full: new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date),
+    };
+  }
+
+  const TREK_EVENT_NAMES = { alibaba: 'Alibaba HQ · Hangzhou', refinery: 'Private Refinery Island' };
+
+  function renderTrekEvents(events, failed = false) {
+    $$('[data-trek-events]').forEach((root) => {
+      const list = $('.trek-event-list', root);
+      if (!list) return;
+      list.replaceChildren();
+      const matches = (events || []).filter((event) => event.trek === root.dataset.trekEvents).slice(0, 3);
+      if (failed || !matches.length) {
+        const empty = document.createElement('p');
+        empty.className = 'trek-events-empty';
+        empty.textContent = failed ? 'Trek dates are temporarily unavailable.' : 'No upcoming dates have been announced yet.';
+        list.appendChild(empty);
+        return;
+      }
+      matches.forEach((event) => {
+        const date = eventDateParts(event.date);
+        const item = document.createElement('article');
+        item.className = 'trek-event-item';
+        const title = document.createElement('h5');
+        title.textContent = event.title || 'Upcoming trek';
+        const meta = document.createElement('p');
+        meta.className = 'trek-event-meta';
+        const when = document.createElement('time');
+        when.dateTime = event.date || '';
+        when.textContent = date.full;
+        meta.appendChild(when);
+        if (event.time) meta.append(` · ${event.time} Hangzhou time`);
+        if (event.location) meta.append(` · ${event.location}`);
+        item.append(title, meta);
+        if (event.description) {
+          const description = document.createElement('p');
+          description.className = 'trek-event-description';
+          description.textContent = event.description;
+          item.appendChild(description);
+        }
+        if (event.url) {
+          const link = document.createElement('a');
+          link.className = 'trek-event-link';
+          link.href = event.url;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.textContent = 'Event details ↗';
+          item.appendChild(link);
+        }
+        list.appendChild(item);
+      });
+    });
+  }
+
+  async function loadPublicEvents() {
+    const grid = $('#publicEvents');
+    if (!grid) return;
+    try {
+      const result = await api.get('/api/events?limit=100');
+      const events = Array.isArray(result.events) ? result.events : [];
+      renderTrekEvents(events);
+      const signature = JSON.stringify(events);
+      const previewEvents = events.slice(0, 3);
+      if (signature === publicEventsSignature) return;
+      publicEventsSignature = signature;
+      grid.replaceChildren();
+      if (!events.length) {
+        const empty = document.createElement('p');
+        empty.className = 'public-events-empty';
+        empty.textContent = 'No upcoming events are on the calendar yet. Check back soon.';
+        grid.appendChild(empty);
+        return;
+      }
+      previewEvents.forEach((event) => {
+        const date = eventDateParts(event.date);
+        const card = document.createElement('article');
+        card.className = 'public-event-card';
+        const dateBadge = document.createElement('div');
+        dateBadge.className = 'public-event-date';
+        dateBadge.setAttribute('aria-hidden', 'true');
+        const month = document.createElement('span');
+        month.textContent = date.month;
+        const day = document.createElement('strong');
+        day.textContent = date.day;
+        dateBadge.append(month, day);
+        const content = document.createElement('div');
+        content.className = 'public-event-content';
+        const kicker = document.createElement('p');
+        kicker.className = 'public-event-kicker';
+        kicker.textContent = `Hi World Club · ${TREK_EVENT_NAMES[event.trek] || 'Upcoming'}`;
+        const title = document.createElement('h3');
+        title.textContent = event.title;
+        const time = document.createElement('p');
+        time.className = 'public-event-time';
+        const when = document.createElement('time');
+        when.dateTime = event.date;
+        when.textContent = date.full;
+        time.appendChild(when);
+        if (event.time) time.append(` · ${event.time} Hangzhou time`);
+        const location = document.createElement('p');
+        location.className = 'public-event-location';
+        location.textContent = event.location || 'Location to be announced';
+        content.append(kicker, title, time, location);
+        if (event.description) {
+          const description = document.createElement('p');
+          description.className = 'public-event-description';
+          description.textContent = event.description;
+          content.appendChild(description);
+        }
+        if (event.url) {
+          const link = document.createElement('a');
+          link.className = 'public-event-link';
+          link.href = event.url;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.textContent = 'Event details ↗';
+          content.appendChild(link);
+        }
+        card.append(dateBadge, content);
+        grid.appendChild(card);
+      });
+    } catch {
+      markOffline();
+      publicEventsSignature = null;
+      renderTrekEvents([], true);
+      const unavailable = document.createElement('p');
+      unavailable.className = 'public-events-empty';
+      unavailable.textContent = 'The event calendar is temporarily unavailable.';
+      grid.replaceChildren(unavailable);
+    }
+  }
+
+  let publicRefreshPromise = null;
+  function refreshPublicData() {
+    if (document.hidden) return Promise.resolve();
+    if (publicRefreshPromise) return publicRefreshPromise;
+    publicRefreshPromise = (async () => {
+      await Promise.all([
+        loadStats(), loadPledges(), loadTrekSeats(), loadRecentPasses(), loadPublicActivity(), loadPublicEvents(),
+      ]);
+      await syncOfflinePledges();
+      await syncOfflineApplications();
+    })().finally(() => { publicRefreshPromise = null; });
+    return publicRefreshPromise;
+  }
+
   /* ---------------- boot ---------------- */
   fitAll();
   setTimeout(fitAll, 300);
-  loadStats();
-  loadPledges();
-  loadTrekSeats();
-  addEventListener('online', () => loadStats());
+  refreshPublicData();
+  setInterval(refreshPublicData, 45_000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshPublicData(); });
+  addEventListener('online', refreshPublicData);
 })();

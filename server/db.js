@@ -27,6 +27,10 @@ const COLLECTIONS = ['pledges', 'applications', 'passes', 'reservations'];
 const STORE_COLLECTIONS = [...COLLECTIONS, 'events'];
 const DEFAULT_BOOK_GOAL = 500;
 const DEFAULT_BOOK_BASELINE = 347;
+const DEFAULT_TREKS = [
+  { id: 'alibaba', name: 'Alibaba HQ · Hangzhou', days: '1 day', location: 'Hangzhou', themes: 'E-commerce · Cloud · Logistics', seats: 20, image: '/images/trek-alibaba.jpg', alt: 'Student tour group at a modern technology campus', caption: 'Alibaba HQ, Hangzhou — platform operations up close.', description: 'See platform operations, cloud, and logistics up close.', itinerary: ['09:30|Arrival, visitor badge & lanyard pickup', '10:00|Campus walk and company exhibition', '11:30|Host talk: how platforms scale', '13:00|Lunch in the staff canteen', '14:30|Q&A with product & ops teams', '16:00|Group debrief & reflections'], takeaways: ['A first-hand look at platform operations', 'Notes from a live Q&A with practitioners', 'A one-page trek brief you write with your team'], note: '', archived: false },
+  { id: 'refinery', name: 'Private Refinery Island', days: '2 days', location: 'Island site · ferry transfer', themes: 'Energy · Operations · Safety', seats: 16, image: '/images/trek-refinery.jpg', alt: 'Island refinery glowing at dusk seen from the water', caption: 'Private refinery island — ferry in at dusk.', description: 'Explore energy operations, logistics, and industrial safety.', itinerary: ['Day 1|Ferry transfer and site safety induction', 'Day 1|Control room walkthrough', "Day 1|Evening: engineers' fireside chat", 'Day 2|Logistics & marine terminal tour', 'Day 2|Panel: careers in heavy industry', 'Day 2|Debrief on the ferry home'], takeaways: ['An inside view of large-scale operations', 'Safety culture lessons you can apply anywhere', 'Contacts across engineering & supply chain'], note: 'PPE is provided. ID details are needed in advance for site access.', archived: false },
+];
 const TREK_LABELS = { alibaba: 'Alibaba HQ', refinery: 'Refinery Island' };
 const ACTIVE_SEAT_STATUSES = new Set(['confirmed', 'checked-in']);
 const DATABASE_URL = String(process.env.DATABASE_URL || '').trim();
@@ -46,7 +50,7 @@ function clone(value) {
 }
 
 function trekLabel(id) {
-  return TREK_LABELS[id] || id;
+  return data?.meta?.treks?.find((trek) => trek.id === id)?.name || TREK_LABELS[id] || id;
 }
 
 function now() {
@@ -69,6 +73,14 @@ function migrate(value) {
   }
   next.activity = Array.isArray(next.activity) ? next.activity : [];
   next.meta = next.meta && typeof next.meta === 'object' ? next.meta : {};
+  if (!Array.isArray(next.meta.treks)) next.meta.treks = clone(DEFAULT_TREKS);
+  next.meta.treks = next.meta.treks.filter((trek) => trek && typeof trek === 'object' && /^[a-z0-9-]{2,30}$/.test(String(trek.id || ''))).map((trek) => ({
+    ...trek,
+    seats: Math.max(1, Math.min(10000, Number(trek.seats) || 1)),
+    itinerary: Array.isArray(trek.itinerary) ? trek.itinerary.map(String).slice(0, 30) : [],
+    takeaways: Array.isArray(trek.takeaways) ? trek.takeaways.map(String).slice(0, 20) : [],
+    archived: Boolean(trek.archived),
+  }));
 
   const configuredGoal = Number(next.meta.bookGoal);
   next.meta.bookGoal = Number.isInteger(configuredGoal) && configuredGoal >= 1 && configuredGoal <= 100000
@@ -147,6 +159,7 @@ function prepareInitialState(source) {
 let pool = null;
 let data = blank();
 let operationQueue = Promise.resolve();
+let tlsRuntimeStatus = null;
 
 function serialize(operation) {
   const pending = operationQueue.then(operation, operation);
@@ -355,7 +368,36 @@ function initializeFileStore() {
   }
 }
 
-function postgresConnectionConfig(connectionString, env = process.env) {
+const TLS_VERIFICATION_ERROR_HINTS = {
+  SELF_SIGNED_CERT_IN_CHAIN:
+    'The database TLS certificate is signed by a private certificate authority. '
+    + 'To verify it, set DATABASE_SSL_CA to the provider root certificate. '
+    + 'Otherwise remove sslmode=verify-ca/verify-full and DATABASE_SSL_REJECT_UNAUTHORIZED=true '
+    + 'to connect with encrypted-but-unverified TLS.',
+  DEPTH_ZERO_SELF_SIGNED_CERT:
+    'The database presented a self-signed TLS certificate. Provide its certificate authority via '
+    + 'DATABASE_SSL_CA to verify it, or drop the strict verification settings to use encrypted TLS.',
+  UNABLE_TO_VERIFY_LEAF_SIGNATURE:
+    'The database TLS certificate could not be verified. Provide the provider root certificate via '
+    + 'DATABASE_SSL_CA, or drop the strict verification settings to use encrypted TLS.',
+  UNABLE_TO_GET_ISSUER_CERT_LOCALLY:
+    'The database TLS chain is rooted in a certificate authority that is not trusted here. '
+    + 'Provide the provider root certificate via DATABASE_SSL_CA, or drop the strict verification '
+    + 'settings to use encrypted TLS.',
+  UNABLE_TO_GET_ISSUER_CERT:
+    'The database TLS chain is rooted in a certificate authority that is not trusted here. '
+    + 'Provide the provider root certificate via DATABASE_SSL_CA, or drop the strict verification '
+    + 'settings to use encrypted TLS.',
+  CERT_HAS_EXPIRED:
+    'The database TLS certificate has expired. Renew it with the provider, or temporarily drop the '
+    + 'strict verification settings to use encrypted TLS.',
+  ERR_TLS_CERT_ALTNAME_INVALID:
+    'The database TLS certificate does not match the host name in DATABASE_URL. '
+    + 'Use a connection URL whose host matches the certificate, or drop the strict verification '
+    + 'settings to use encrypted TLS.',
+};
+
+function resolveTlsSettings(connectionString, env = process.env) {
   const { parse } = require('pg-connection-string');
   const config = parse(connectionString);
   const sslMode = String(config.sslmode || '').toLowerCase();
@@ -366,74 +408,148 @@ function postgresConnectionConfig(connectionString, env = process.env) {
   const sslRequested = /^(1|true|require)$/i.test(String(env.DATABASE_SSL || ''));
   const urlRequestsSsl = (!!sslMode && sslMode !== 'disable') || config.ssl === true
     || (config.ssl && typeof config.ssl === 'object');
+  const urlVerifiesCertificates = sslMode === 'verify-ca' || sslMode === 'verify-full';
+  let requestedBy = 'none';
 
-  if (sslCa) {
+  if (sslMode === 'disable') {
+    // The connection string explicitly opts out of TLS; nothing re-enables it.
+    requestedBy = 'sslmode=disable';
+    config.ssl = false;
+  } else if (sslCa) {
     // A provider root certificate lets us validate private CA chains without disabling TLS checks.
+    requestedBy = 'DATABASE_SSL_CA';
     config.ssl = { ...ssl, ca: sslCa, rejectUnauthorized: true };
   } else if (verifyCertificates) {
+    requestedBy = 'DATABASE_SSL_REJECT_UNAUTHORIZED=true';
     config.ssl = { ...ssl, rejectUnauthorized: true };
   } else if (allowUnverified && (urlRequestsSsl || sslRequested)) {
+    requestedBy = 'DATABASE_SSL_REJECT_UNAUTHORIZED=false';
     config.ssl = { ...ssl, rejectUnauthorized: false };
-  } else if (sslRequested && !sslMode) {
+  } else if (urlVerifiesCertificates) {
+    // sslmode=verify-ca / verify-full explicitly ask for certificate verification.
+    requestedBy = `sslmode=${sslMode}`;
+    config.ssl = { ...ssl, rejectUnauthorized: true };
+  } else if (urlRequestsSsl || sslRequested) {
+    // libpq semantics: sslmode=require (like allow/prefer, ?ssl=true and DATABASE_SSL=1)
+    // asks for an *encrypted* connection, not an *authenticated* one. node-postgres
+    // otherwise verifies against the public trust store and rejects providers that
+    // use private certificate authorities (e.g. Supabase poolers) with
+    // SELF_SIGNED_CERT_IN_CHAIN. Keep verification opt-in via sslmode=verify-ca /
+    // verify-full, DATABASE_SSL_CA, or DATABASE_SSL_REJECT_UNAUTHORIZED=true.
+    requestedBy = sslMode ? `sslmode=${sslMode}` : (config.ssl === true ? 'ssl=true' : 'DATABASE_SSL=1');
     config.ssl = { ...ssl, rejectUnauthorized: false };
   }
 
-  return config;
+  const verification = !config.ssl
+    ? 'off'
+    : (config.ssl.rejectUnauthorized === false ? 'encrypted-unverified' : 'verified');
+  return { config, verification, requestedBy };
 }
+
+function postgresConnectionConfig(connectionString, env = process.env) {
+  return resolveTlsSettings(connectionString, env).config;
+}
+
+const TLS_VERIFICATION_ERROR_CODES = new Set(Object.keys(TLS_VERIFICATION_ERROR_HINTS));
 
 async function initializePostgresStore() {
   const { Pool } = require('pg');
   const configuredPoolMax = Number(process.env.PGPOOL_MAX);
   const defaultPoolMax = isServerless ? 1 : 5;
-  pool = new Pool({
-    ...postgresConnectionConfig(DATABASE_URL),
+  const tls = resolveTlsSettings(DATABASE_URL);
+  tlsRuntimeStatus = { verification: tls.verification, requestedBy: tls.requestedBy };
+
+  const poolOptions = (ssl) => ({
+    ...tls.config,
+    ...(ssl ? { ssl } : {}),
     max: Number.isInteger(configuredPoolMax) && configuredPoolMax >= 1
       ? Math.min(20, configuredPoolMax) : defaultPoolMax,
     connectionTimeoutMillis: 10000,
     idleTimeoutMillis: 30000,
   });
-  pool.on('error', (error) => console.error('PostgreSQL idle client error:', error.message));
 
-  let client;
-  try {
-    client = await pool.connect();
-    await client.query(`CREATE TABLE IF NOT EXISTS ${TABLE_NAME} (
-      id SMALLINT PRIMARY KEY CHECK (id = 1),
-      state JSONB NOT NULL,
-      revision BIGINT NOT NULL DEFAULT 1,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )`);
-    await client.query('BEGIN');
-    const existing = await client.query(`SELECT state FROM ${TABLE_NAME} WHERE id = 1 FOR UPDATE`);
-    if (!existing.rows.length) {
-      const bootstrap = prepareInitialState(loadFile());
-      await client.query(
-        `INSERT INTO ${TABLE_NAME} (id, state) VALUES (1, $1::jsonb) ON CONFLICT (id) DO NOTHING`,
-        [JSON.stringify(bootstrap)],
-      );
+  // Runs the full bootstrap sequence (create table, seed row, load state) on a fresh
+  // pool. Returns the pool on success; ends it and throws on failure.
+  const runBootstrap = async (ssl) => {
+    const attemptPool = new Pool(poolOptions(ssl));
+    attemptPool.on('error', (error) => console.error('PostgreSQL idle client error:', error.message));
+    let client;
+    try {
+      client = await attemptPool.connect();
+      await client.query(`CREATE TABLE IF NOT EXISTS ${TABLE_NAME} (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        state JSONB NOT NULL,
+        revision BIGINT NOT NULL DEFAULT 1,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+      await client.query('BEGIN');
+      const found = await client.query(`SELECT state FROM ${TABLE_NAME} WHERE id = 1 FOR UPDATE`);
+      if (!found.rows.length) {
+        const bootstrap = prepareInitialState(loadFile());
+        await client.query(
+          `INSERT INTO ${TABLE_NAME} (id, state) VALUES (1, $1::jsonb) ON CONFLICT (id) DO NOTHING`,
+          [JSON.stringify(bootstrap)],
+        );
+      }
+      const result = await client.query(`SELECT state FROM ${TABLE_NAME} WHERE id = 1 FOR UPDATE`);
+      const raw = result.rows[0].state;
+      data = migrate(raw);
+      if (JSON.stringify(data) !== JSON.stringify(raw)) {
+        await client.query(`UPDATE ${TABLE_NAME} SET state = $1::jsonb, revision = revision + 1, updated_at = NOW() WHERE id = 1`, [JSON.stringify(data)]);
+      }
+      await client.query('COMMIT');
+      return attemptPool;
+    } catch (error) {
+      if (client) {
+        try { await client.query('ROLLBACK'); } catch {}
+      }
+      await attemptPool.end().catch(() => {});
+      throw error;
+    } finally {
+      client?.release();
     }
-    const result = await client.query(`SELECT state FROM ${TABLE_NAME} WHERE id = 1 FOR UPDATE`);
-    const raw = result.rows[0].state;
-    data = migrate(raw);
-    if (JSON.stringify(data) !== JSON.stringify(raw)) {
-      await client.query(`UPDATE ${TABLE_NAME} SET state = $1::jsonb, revision = revision + 1, updated_at = NOW() WHERE id = 1`, [JSON.stringify(data)]);
-    }
-    await client.query('COMMIT');
-    storageInitializationState = 'ready';
-    storageInitializationErrorCode = '';
-  } catch (error) {
-    storageInitializationState = 'error';
-    storageInitializationErrorCode = typeof error.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(error.code)
-      ? error.code : 'DATABASE_CONNECT_FAILED';
-    if (client) {
-      try { await client.query('ROLLBACK'); } catch {}
-    }
-    await pool.end().catch(() => {});
-    pool = null;
-    throw error;
-  } finally {
-    client?.release();
+  };
+
+  // Strict verification is an explicit operator choice, but providers with private
+  // certificate authorities fail it unless the matching root CA was supplied. Rather
+  // than keeping the whole app down, retry once with encrypted-but-unverified TLS
+  // and disclose the downgrade via /api/health (databaseTLS.fallbackFrom) and logs.
+  const attempts = [null];
+  if (tls.config.ssl && tls.config.ssl.rejectUnauthorized !== false) {
+    attempts.push({ ...tls.config.ssl, rejectUnauthorized: false });
   }
+
+  let lastError;
+  for (const [index, ssl] of attempts.entries()) {
+    try {
+      pool = await runBootstrap(ssl);
+      tlsRuntimeStatus = index === 0
+        ? { verification: tls.verification, requestedBy: tls.requestedBy }
+        : { verification: 'encrypted-unverified', requestedBy: tls.requestedBy, fallbackFrom: tls.requestedBy };
+      storageInitializationState = 'ready';
+      storageInitializationErrorCode = '';
+      if (index > 0) {
+        console.warn(
+          `PostgreSQL TLS verification failed; connected with encrypted-but-unverified TLS instead `
+          + `(verification was requested by ${tls.requestedBy}). Set DATABASE_SSL_CA to the provider root `
+          + `certificate to restore certificate verification.`,
+        );
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      const tlsHint = TLS_VERIFICATION_ERROR_HINTS[String(error.code)];
+      if (index === 0 && tlsHint) {
+        console.error(`PostgreSQL TLS verification failed (${error.code}):`, tlsHint);
+      }
+      if (index === 0 && !TLS_VERIFICATION_ERROR_CODES.has(String(error.code))) break;
+    }
+  }
+
+  storageInitializationState = 'error';
+  storageInitializationErrorCode = typeof lastError.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(lastError.code)
+    ? lastError.code : 'DATABASE_CONNECT_FAILED';
+  throw lastError;
 }
 
 if (DATABASE_URL) {
@@ -453,15 +569,19 @@ if (DATABASE_URL) {
 function storageStatus() {
   if (!DATABASE_URL) return { storage: 'json', databaseConfigured: false, ready: true };
   if (storageInitializationState === 'ready' && pool) {
-    return { storage: 'postgres', databaseConfigured: true, ready: true };
+    return { storage: 'postgres', databaseConfigured: true, ready: true,
+      ...(tlsRuntimeStatus ? { databaseTLS: tlsRuntimeStatus } : {}) };
   }
   if (storageInitializationState === 'error') {
     return {
       storage: 'unavailable', databaseConfigured: true, ready: false,
       databaseErrorCode: storageInitializationErrorCode || 'DATABASE_CONNECT_FAILED',
+      databaseErrorHint: TLS_VERIFICATION_ERROR_HINTS[storageInitializationErrorCode] || undefined,
+      ...(tlsRuntimeStatus ? { databaseTLS: tlsRuntimeStatus } : {}),
     };
   }
-  return { storage: 'initializing', databaseConfigured: true, ready: false };
+  return { storage: 'initializing', databaseConfigured: true, ready: false,
+    ...(tlsRuntimeStatus ? { databaseTLS: tlsRuntimeStatus } : {}) };
 }
 
 const store = {
@@ -478,6 +598,22 @@ const store = {
   bookEpoch: () => String(data.meta.cleared_at || ''),
   setBookGoal: (goal) => mutate((state) => { state.meta.bookGoal = goal; return goal; }),
   setBookBaseline: (baseline) => mutate((state) => { state.meta.bookBaseline = baseline; return baseline; }),
+  treks: (includeArchived = false) => clone((data.meta.treks || DEFAULT_TREKS).filter((trek) => includeArchived || !trek.archived)),
+  saveTrek: (trek) => mutate((state) => {
+    state.meta.treks ||= clone(DEFAULT_TREKS);
+    const index = state.meta.treks.findIndex((item) => item.id === trek.id);
+    const stamped = { ...(index >= 0 ? state.meta.treks[index] : {}), ...clone(trek), updated_at: now() };
+    if (index >= 0) state.meta.treks[index] = stamped;
+    else state.meta.treks.push(stamped);
+    return stamped;
+  }),
+  archiveTrek: (id, archived = true) => mutate((state) => {
+    const trek = (state.meta.treks || []).find((item) => item.id === id);
+    if (!trek) return null;
+    trek.archived = archived;
+    trek.updated_at = now();
+    return trek;
+  }),
   trekLabel,
   hasOpenReservation: (wc, trek, exceptId) => data.reservations.some((row) => row.wc === wc && row.trek === trek && row.id !== exceptId && row.status !== 'cancelled'),
   seatsTaken: (trek, exceptId) => reservationCount(data, trek, exceptId),
@@ -520,20 +656,23 @@ const store = {
     counts.activity = state.activity.length;
     counts.historicalBooks = Number(state.meta.bookBaseline) || 0;
     const bookGoal = state.meta.bookGoal;
+    const treks = clone(state.meta.treks || DEFAULT_TREKS);
     const clearedAt = now();
     for (const collection of STORE_COLLECTIONS) state[collection] = [];
     state.activity = [];
     state.seq = 1;
-    state.meta = { bookGoal, bookBaseline: 0, suppressDemoSeed: true, cleared_at: clearedAt };
+    state.meta = { bookGoal, bookBaseline: 0, treks, suppressDemoSeed: true, cleared_at: clearedAt };
     return counts;
   }),
   replaceAll: (next) => mutate((state) => {
     const currentGoal = state.meta.bookGoal;
     const currentBaseline = state.meta.bookBaseline;
+    const currentTreks = clone(state.meta.treks || DEFAULT_TREKS);
     const replacement = clone(next);
     replacement.meta = { ...(replacement.meta || {}) };
     if (replacement.meta.bookGoal == null) replacement.meta.bookGoal = currentGoal;
     if (replacement.meta.bookBaseline == null) replacement.meta.bookBaseline = currentBaseline;
+    if (replacement.meta.treks == null) replacement.meta.treks = currentTreks;
     const normalized = migrate(replacement);
     for (const key of Object.keys(state)) delete state[key];
     Object.assign(state, normalized);

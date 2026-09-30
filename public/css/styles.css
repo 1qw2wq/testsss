@@ -546,3 +546,19 @@ body.laser-on,body.laser-on *{cursor:none!important}
 .book-breakdown-public{margin:10px 0 0;color:var(--muted);font:500 12.5px/1.45 var(--sans)}
 @media(prefers-reduced-motion:reduce){.public-event-card{transition:none!important}.public-event-card:hover{transform:none}}
 @media(max-width:860px){.nav-links{max-height:calc(100vh - 64px);overflow-y:auto}}
+
+/* Refined landing page: a quiet identity-led first impression. */
+.brand img{display:block;width:34px;height:34px;border-radius:7px}
+.poster>.fit-wrap{display:none}
+.hero-logo{width:clamp(156px,22vw,250px);margin:clamp(28px,5vw,54px) auto 0;filter:drop-shadow(0 18px 30px rgba(16,23,53,.1))}
+.hero-logo img{display:block;width:100%;height:auto;border-radius:18px}
+.hero-flatlay{width:min(100%,1080px);margin:clamp(24px,4vw,44px) auto 0;overflow:hidden;border:1px solid rgba(16,23,53,.08);border-radius:22px;background:#f7f4ed;box-shadow:0 24px 60px -42px rgba(16,23,53,.5)}
+.hero-flatlay img{display:block;width:100%;height:auto}
+.hero-flatlay-hi{width:min(88vw,760px)}
+.hero-flatlay-world{margin-top:clamp(36px,6vw,68px)}
+.poster .taglines{margin:clamp(30px,5vw,52px) 0 22px;font-size:clamp(27px,4.4vw,50px);line-height:.98;letter-spacing:-.025em;text-transform:none}
+.poster .taglines>*+*{margin-top:.22em}
+.poster .hero-sub{max-width:650px;margin:0 auto;color:var(--ink-2);font-size:clamp(15px,1.8vw,19px);line-height:1.55}
+.poster .hero-cta{margin-top:28px}
+.poster .poster-foot{margin-top:52px}
+@media(max-width:600px){.hero-logo{width:150px}.poster{padding-top:90px}.poster .taglines{font-size:34px}}

@@ -1,7 +1,7 @@
 {
   "name": "hi-world-club",
   "version": "2.0.0",
-  "description": "Hi World Club — Explore Well. Refined frontend + Express + JSON backend.",
+  "description": "Hi World Club — Explore Well. Refined frontend + Express API with PostgreSQL persistence.",
   "type": "commonjs",
   "main": "server/server.js",
   "scripts": {
@@ -17,6 +17,8 @@
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "pg": "^8.23.0",
+    "pg-connection-string": "^2.14.0"
   }
 }
